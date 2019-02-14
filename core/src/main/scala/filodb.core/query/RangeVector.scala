@@ -48,8 +48,8 @@ final case class PartitionRangeVectorKey(partBase: Array[Byte],
         case IntColumn    => Seq(UTF8Str(c.name) -> UTF8Str(partSchema.getInt(partBase, partOffset, pos).toString))
         case LongColumn   => Seq(UTF8Str(c.name) -> UTF8Str(partSchema.getLong(partBase, partOffset, pos).toString))
         case MapColumn    => val consumer = new SeqMapConsumer
-                             partSchema.consumeMapItems(partBase, partOffset, pos, consumer)
-                             consumer.pairs
+          partSchema.consumeMapItems(partBase, partOffset, pos, consumer)
+          consumer.pairs
         case _            => throw new UnsupportedOperationException("Not supported yet")
       }
     }.toMap
@@ -102,10 +102,10 @@ final case class RawDataRangeVector(key: RangeVectorKey,
 }
 
 /**
- * A RangeVector designed to return one row per ChunkSetInfo, with the following schema:
- * ID (Long), NumRows (Int), startTime (Long), endTime (Long), numBytes(I) of chunk, readerclass of chunk
- * @param column the Column to return detailed chunk info about, must be a DataColumn
- */
+  * A RangeVector designed to return one row per ChunkSetInfo, with the following schema:
+  * ID (Long), NumRows (Int), startTime (Long), endTime (Long), numBytes(I) of chunk, readerclass of chunk
+  * @param column the Column to return detailed chunk info about, must be a DataColumn
+  */
 final case class ChunkInfoRangeVector(key: RangeVectorKey,
                                       partition: ReadablePartition,
                                       chunkMethod: ChunkScanMethod,
@@ -119,12 +119,12 @@ final case class ChunkInfoRangeVector(key: RangeVectorKey,
 }
 
 /**
- * SerializableRangeVector represents a RangeVector that can be serialized over the wire.
- * RecordContainers may be shared amongst all the SRV's from a single Result to minimize space and heap usage --
- *   this is the reason for the startRecordNo, the row # of the first container.
- * PLEASE PLEASE use Kryo to serialize this as it will make sure the single shared RecordContainer is
- * only serialized once as a single instance.
- */
+  * SerializableRangeVector represents a RangeVector that can be serialized over the wire.
+  * RecordContainers may be shared amongst all the SRV's from a single Result to minimize space and heap usage --
+  *   this is the reason for the startRecordNo, the row # of the first container.
+  * PLEASE PLEASE use Kryo to serialize this as it will make sure the single shared RecordContainer is
+  * only serialized once as a single instance.
+  */
 final class SerializableRangeVector(val key: RangeVectorKey,
                                     val numRows: Int,
                                     containers: Seq[RecordContainer],
@@ -163,20 +163,15 @@ object SerializableRangeVector extends StrictLogging {
   val queryResultBytes = Kamon.histogram("query-engine-result-bytes")
 
   /**
-   * Creates a SerializableRangeVector out of another RangeVector by sharing a previously used RecordBuilder.
-   * The most efficient option when you need to create multiple SRVs as the containers are automatically
-   * shared correctly.
-   * The containers are sent whole as most likely more than one would be sent, so they should mostly be packed.
-   * limit - to limit the rows added to the result
-   */
+    * Creates a SerializableRangeVector out of another RangeVector by sharing a previously used RecordBuilder.
+    * The most efficient option when you need to create multiple SRVs as the containers are automatically
+    * shared correctly.
+    * The containers are sent whole as most likely more than one would be sent, so they should mostly be packed.
+    */
   def apply(rv: RangeVector,
             builder: RecordBuilder,
-            schema: RecordSchema,
-            resultSize: Int = 0,
-            limit: Int = Int.MaxValue,
-            failOnLimit: Boolean = true): SerializableRangeVector = {
+            schema: RecordSchema): SerializableRangeVector = {
     var numRows = 0
-    var totalRows = resultSize
     val oldContainerOpt = builder.currentContainer
     val startRecordNo = oldContainerOpt.map(_.numRecords).getOrElse(0)
     // Important TODO / TechDebt: We need to replace Iterators with cursors to better control
@@ -184,14 +179,10 @@ object SerializableRangeVector extends StrictLogging {
     try {
       OffheapLFSortedIDMap.validateNoSharedLocks()
       val rows = rv.rows
-      while (totalRows <= limit && rows.hasNext) {
+      while (rows.hasNext) {
         numRows += 1
-        totalRows += 1
         builder.addFromReader(rows.next)
       }
-      if (failOnLimit && totalRows > limit)
-        throw new ResponseTooLargeException(s"result size is more than $limit samples. " +
-          s"Try applying more filters or reduce time range.")
     } finally {
       // When the query is done, clean up lingering shared locks caused by iterator limit.
       OffheapLFSortedIDMap.releaseAllSharedLocks()
@@ -206,9 +197,9 @@ object SerializableRangeVector extends StrictLogging {
   }
 
   /**
-   * Creates a SerializableRangeVector out of another RV and ColumnInfo schema.  Convenient but no sharing.
-   * Since it wastes space when working with multiple RVs, should be used mostly for testing.
-   */
+    * Creates a SerializableRangeVector out of another RV and ColumnInfo schema.  Convenient but no sharing.
+    * Since it wastes space when working with multiple RVs, should be used mostly for testing.
+    */
   def apply(rv: RangeVector, cols: Seq[ColumnInfo]): SerializableRangeVector = {
     val schema = toSchema(cols)
     apply(rv, toBuilder(schema), schema)
@@ -232,9 +223,3 @@ object SerializableRangeVector extends StrictLogging {
 
 final case class IteratorBackedRangeVector(key: RangeVectorKey,
                                            rows: Iterator[RowReader]) extends RangeVector
-
-/**
-  * Use this exception to raise user errors when inside the context of an observable.
-  * Currently no other way to raise user errors when returning an observable
-  */
-class ResponseTooLargeException(message: String) extends RuntimeException(message)
