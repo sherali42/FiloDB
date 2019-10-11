@@ -461,7 +461,7 @@ class TimeSeriesShard(val dataset: Dataset,
       // go through the buckets in reverse order to first one wins and we need not rewrite
       // entries in lucene
       // no need to go into currentIndexTimeBucket since it is not present in cass
-      logger.info("recovering index for all the shards $shardsToRecover")
+      logger.info(s"recovering index for all the shards $shardsToRecover")
       val timeBuckets = for {
         tb <- currentIndexTimeBucket - 1 to earliestTimeBucket by -1
         shard <- 0 until shardsToRecover
