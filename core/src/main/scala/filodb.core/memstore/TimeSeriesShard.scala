@@ -17,6 +17,7 @@ import monix.eval.Task
 import monix.execution.{Scheduler, UncaughtExceptionReporter}
 import monix.execution.atomic.AtomicBoolean
 import monix.reactive.Observable
+import net.ceedubs.ficus.Ficus._
 import org.apache.lucene.util.BytesRef
 import org.jctools.maps.NonBlockingHashMapLong
 import scalaxy.loops._
@@ -202,11 +203,11 @@ class TimeSeriesShard(val ref: DatasetRef,
                      (implicit val ioPool: ExecutionContext) extends StrictLogging {
   import collection.JavaConverters._
 
-  import TimeSeriesShard._
   import FiloSchedulers._
+  import TimeSeriesShard._
 
   val shardStats = new TimeSeriesShardStats(ref, shardNum)
-
+  val shardsToRecover = GlobalConfig.systemConfig.as[Option[String]]("filodb.target-num-shards").getOrElse("32").toInt
   /**
     * Map of all partitions in the shard stored in memory, indexed by partition ID
     */
@@ -499,8 +500,11 @@ class TimeSeriesShard(val ref: DatasetRef,
       // go through the buckets in reverse order to first one wins and we need not rewrite
       // entries in lucene
       // no need to go into currentIndexTimeBucket since it is not present in cass
-      val timeBuckets = for {tb <- currentIndexTimeBucket - 1 to earliestTimeBucket by -1} yield {
-        colStore.getPartKeyTimeBucket(ref, shardNum, tb).map { b =>
+      val timeBuckets = for {
+        tb <- currentIndexTimeBucket - 1 to earliestTimeBucket by -1
+        shard <- 0 until shardsToRecover
+      } yield {
+        colStore.getPartKeyTimeBucket(ref, shard, tb).map { b =>
           new IndexData(tb, b.segmentId, RecordContainer(b.segment.array()))
         }
       }
