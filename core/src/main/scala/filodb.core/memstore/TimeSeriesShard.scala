@@ -806,7 +806,8 @@ class TimeSeriesShard(val dataset: Dataset,
 
       /* Step 4: Update endTime of all partKeys that stopped ingesting in this flush period.
          If we are flushing time buckets, use its timeBucketId, otherwise, use currentTimeBucket id. */
-      updateIndexWithEndTime(p, chunks, flushGroup.flushTimeBuckets.map(_.timeBucket).getOrElse(currentIndexTimeBucket))
+      //updateIndexWithEndTime(p, chunks, flushGroup.flushTimeBuckets
+      // .map(_.timeBucket).getOrElse(currentIndexTimeBucket))
       chunks
     }
 
