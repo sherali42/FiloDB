@@ -241,6 +241,9 @@ class TimeSeriesShard(val dataset: Dataset,
   val ingestSched = Scheduler.singleThread(s"$IngestSchedName-${dataset.ref}-$shardNum",
     reporter = UncaughtExceptionReporter(logger.error("Uncaught Exception in TimeSeriesShard.ingestSched", _)))
 
+  val recoverySched = Scheduler.forkJoin(shardsToRecover, shardsToRecover, s"IndexRecovery-${dataset.ref}-$shardNum",
+    reporter = UncaughtExceptionReporter(logger.error("Uncaught Exception in TimeSeriesShard.ingestSched", _)))
+
   private val blockMemorySize = storeConfig.shardMemSize
   protected val numGroups = storeConfig.groupsPerShard
   private val chunkRetentionHours = (storeConfig.demandPagedRetentionPeriod.toSeconds / 3600).toInt
@@ -471,8 +474,8 @@ class TimeSeriesShard(val dataset: Dataset,
         }
       }
       Observable.flatten(timeBuckets: _*)
-        .foreach(tb => extractTimeBucket(tb, partIdMap))(ingestSched)
-        .map(_ => completeIndexRecovery())(ingestSched)
+        .foreach(tb => extractTimeBucket(tb, partIdMap))(recoverySched)
+        .map(_ => completeIndexRecovery())(recoverySched)
         .onComplete { _ =>
           tracer.finish()
           p.success(())
