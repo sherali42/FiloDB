@@ -478,13 +478,14 @@ class TimeSeriesShard(val dataset: Dataset,
         tb <- currentIndexTimeBucket - 1 to
           Math.max(0, currentIndexTimeBuckets(shard) - numTimeBucketsToRetain) by -1
       } yield {
+        logger.info(s"fetch partkey for tb=$tb shard=$shard")
         colStore.getPartKeyTimeBucket(dataset, shard, tb).map { b =>
           new IndexData(tb, b.segmentId, RecordContainer(b.segment.array()))
         }
       }
       Observable.flatten(timeBuckets: _*)
-        .foreach(tb => extractTimeBucket(tb, partIdMap))(recoverySched)
-        .map(_ => completeIndexRecovery())(recoverySched)
+        .foreach(tb => extractTimeBucket(tb, partIdMap))(ingestSched)
+        .map(_ => completeIndexRecovery())(ingestSched)
         .onComplete { _ =>
           tracer.finish()
           p.success(())
