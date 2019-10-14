@@ -502,7 +502,10 @@ class TimeSeriesShard(val dataset: Dataset,
           }(indexSched)
       })
       logger.info(s"executing observable")
-      f.toListL.runAsync(recoverySched).onComplete(_ => logger.info("recovery done!!!"); p.success())(ingestSched)
+      f.toListL.runAsync(recoverySched).onComplete(_ => {
+        logger.info("recovery done!!!")
+        p.success()
+      })(ingestSched)
     }(ingestSched)
     p.future
   }
@@ -515,7 +518,8 @@ class TimeSeriesShard(val dataset: Dataset,
   }
 
   // scalastyle:off method.length
-  private[memstore] def extractTimeBucket(segment: IndexData, partIdMap: debox.Map[BytesRef, Int], shard: Int = shardNum): Unit = {
+  private[memstore] def extractTimeBucket(segment: IndexData, partIdMap: debox.Map[BytesRef, Int],
+                                          shard: Int = shardNum): Unit = {
     assertThreadName(IngestSchedName)
     logger.info(s"reached1 extractTimeBucket")
     var numRecordsProcessed = 0
