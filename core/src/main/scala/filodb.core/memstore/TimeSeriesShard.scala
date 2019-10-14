@@ -385,12 +385,22 @@ class TimeSeriesShard(val dataset: Dataset,
   private val binRecordReader = new BinaryRecordRowReader(dataset.ingestionSchema)
 
   private[memstore] def initTimeBuckets() = {
-    val highestIndexTimeBucket = Await.result(metastore.readHighestIndexTimeBucket(dataset.ref, shardNum), 1.minute)
+    /*val highestIndexTimeBucket = Await.result(metastore.readHighestIndexTimeBucket(dataset.ref, shardNum), 1.minute)
     currentIndexTimeBucket = highestIndexTimeBucket.map(_ + 1).getOrElse(0)
     val earliestTimeBucket = Math.max(0, currentIndexTimeBucket - numTimeBucketsToRetain)
     for { i <- currentIndexTimeBucket to earliestTimeBucket by -1 optimized } {
       timeBucketBitmaps.put(i, new EWAHCompressedBitmap())
+    }*/
+  }
+
+  private[memstore] def currentIndexTimeBuckets(shard: Integer): Int = {
+    val highestIndexTimeBucket = Await.result(metastore.readHighestIndexTimeBucket(dataset.ref, shard), 1.minute)
+    val currentIndexTimeBucket = highestIndexTimeBucket.map(_ + 1).getOrElse(0)
+    val earliestTimeBucket = Math.max(0, currentIndexTimeBucket - numTimeBucketsToRetain)
+    for { i <- currentIndexTimeBucket to earliestTimeBucket by -1 optimized } {
+      timeBucketBitmaps.put(i, new EWAHCompressedBitmap())
     }
+    currentIndexTimeBucket
   }
 
   // RECOVERY: Check the watermark for the group that this record is part of.  If the ingestOffset is < watermark,
@@ -458,16 +468,15 @@ class TimeSeriesShard(val dataset: Dataset,
         The map and contents will be garbage collected after we are done with recovery */
       val partIdMap = debox.Map.empty[BytesRef, Int]
 
-      val earliestTimeBucket = Math.max(0, currentIndexTimeBucket - numTimeBucketsToRetain)
-      logger.info(s"Recovering timebuckets $earliestTimeBucket to ${currentIndexTimeBucket - 1} " +
-        s"for dataset=${dataset.ref} shard=$shardNum ")
+      logger.info(s"Recovering timebuckets " +
+        s"for dataset=${dataset.ref} shards=$shardsToRecover ")
       // go through the buckets in reverse order to first one wins and we need not rewrite
       // entries in lucene
       // no need to go into currentIndexTimeBucket since it is not present in cass
-      logger.info(s"recovering index for all the shards $shardsToRecover")
       val timeBuckets = for {
-        tb <- currentIndexTimeBucket - 1 to earliestTimeBucket by -1
         shard <- 0 until shardsToRecover
+        tb <- currentIndexTimeBucket - 1 to
+          Math.max(0, currentIndexTimeBuckets(shard) - numTimeBucketsToRetain) by -1
       } yield {
         colStore.getPartKeyTimeBucket(dataset, shard, tb).map { b =>
           new IndexData(tb, b.segmentId, RecordContainer(b.segment.array()))
