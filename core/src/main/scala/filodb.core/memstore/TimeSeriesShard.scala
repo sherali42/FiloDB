@@ -11,6 +11,7 @@ import bloomfilter.mutable.BloomFilter
 import com.googlecode.javaewah.{EWAHCompressedBitmap, IntIterator}
 import com.typesafe.scalalogging.StrictLogging
 import debox.Buffer
+import java.lang
 import kamon.Kamon
 import kamon.metric.MeasurementUnit
 import monix.eval.Task
@@ -195,6 +196,7 @@ class TimeSeriesShard(val dataset: Dataset,
 
   val shardStats = new TimeSeriesShardStats(dataset.ref, shardNum)
   val shardsToRecover = GlobalConfig.systemConfig.as[Option[String]]("filodb.target-num-shards").getOrElse("32").toInt
+  private[memstore] val shardToCurrentTBIndex = new NonBlockingHashMapLong[Integer](shardsToRecover, false)
   /**
     * Map of all partitions in the shard stored in memory, indexed by partition ID
     */
@@ -393,14 +395,21 @@ class TimeSeriesShard(val dataset: Dataset,
     }*/
   }
 
-  private[memstore] def currentIndexTimeBuckets(shard: Integer): Int = {
-    val highestIndexTimeBucket = Await.result(metastore.readHighestIndexTimeBucket(dataset.ref, shard), 1.minute)
-    val currentIndexTimeBucket = highestIndexTimeBucket.map(_ + 1).getOrElse(0)
-    val earliestTimeBucket = Math.max(0, currentIndexTimeBucket - numTimeBucketsToRetain)
-    for { i <- currentIndexTimeBucket to earliestTimeBucket by -1 optimized } {
-      timeBucketBitmaps.put(i, new EWAHCompressedBitmap())
+  private[memstore] def currentIndexTimeBuckets(shard: lang.Long): Int = {
+    logger.info(s"starting currentIndexTimeBuckets shard=$shard")
+    var currentIndexTimeBuckets1 = 0
+    try {
+      val highestIndexTimeBucket = Await.result(metastore.readHighestIndexTimeBucket(dataset.ref, shard.toInt),
+                                                1.minute)
+      currentIndexTimeBuckets1 = highestIndexTimeBucket.map(_ + 1).getOrElse(0)
+      val earliestTimeBucket = Math.max(0, currentIndexTimeBucket - numTimeBucketsToRetain)
+      for { i <- currentIndexTimeBucket to earliestTimeBucket by -1 optimized } {
+        timeBucketBitmaps.put(i, new EWAHCompressedBitmap())
+      }
+    } catch {
+      case e: Exception => logger.error("exception in currentIndexTimeBuckets", e)
     }
-    currentIndexTimeBucket
+    currentIndexTimeBuckets1
   }
 
   // RECOVERY: Check the watermark for the group that this record is part of.  If the ingestOffset is < watermark,
@@ -475,8 +484,8 @@ class TimeSeriesShard(val dataset: Dataset,
       // no need to go into currentIndexTimeBucket since it is not present in cass
       val timeBuckets = for {
         shard <- 0 until shardsToRecover
-        tb <- currentIndexTimeBucket - 1 to
-          Math.max(0, currentIndexTimeBuckets(shard) - numTimeBucketsToRetain) by -1
+        tb <- shardToCurrentTBIndex.getOrElseUpdate(shard.toLong, currentIndexTimeBuckets) - 1 to
+          Math.max(0, shardToCurrentTBIndex.get(shard) - numTimeBucketsToRetain) by -1
       } yield {
         logger.info(s"fetch partkey for tb=$tb shard=$shard")
         colStore.getPartKeyTimeBucket(dataset, shard, tb).map { b =>
