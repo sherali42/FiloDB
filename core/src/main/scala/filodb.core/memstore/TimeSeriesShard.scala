@@ -504,7 +504,7 @@ class TimeSeriesShard(val dataset: Dataset,
       logger.info(s"executing observable")
       f.toListL.runAsync(recoverySched).onComplete(_ => {
         logger.info("recovery done!!!")
-        p.success()
+        p.success(())
       })(ingestSched)
     }(ingestSched)
     p.future
