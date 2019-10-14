@@ -402,9 +402,9 @@ class TimeSeriesShard(val dataset: Dataset,
       val highestIndexTimeBucket = Await.result(metastore.readHighestIndexTimeBucket(dataset.ref, shard.toInt),
                                                 1.minute)
       currentIndexTimeBuckets1 = highestIndexTimeBucket.map(_ + 1).getOrElse(0)
-      val earliestTimeBucket = Math.max(0, currentIndexTimeBucket - numTimeBucketsToRetain)
-      for { i <- currentIndexTimeBucket to earliestTimeBucket by -1 optimized } {
-        timeBucketBitmaps.put(i, new EWAHCompressedBitmap())
+      val earliestTimeBucket = Math.max(0, currentIndexTimeBuckets1 - numTimeBucketsToRetain)
+      for { i <- currentIndexTimeBuckets1 to earliestTimeBucket by -1 optimized } {
+        timeBucketBitmaps.putIfAbsent(i, new EWAHCompressedBitmap())
       }
     } catch {
       case e: Exception => logger.error("exception in currentIndexTimeBuckets", e)
