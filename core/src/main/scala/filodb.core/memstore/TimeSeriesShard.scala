@@ -468,7 +468,7 @@ class TimeSeriesShard(val dataset: Dataset,
     val p = Promise[Unit]()
     Future {
       assertThreadName(IngestSchedName)
-      val f = Observable.fromIterable(0 until shardsToRecover).map (shard => {
+      val f = Observable.fromIterable(0 until shardsToRecover).mapAsync(shardsToRecover) (shard => {
         val indexSched = Scheduler.singleThread(s"indexSched-${dataset.ref}-$shard",
           reporter = UncaughtExceptionReporter(logger.error("Uncaught Exception in TimeSeriesShard.ingestSched", _)))
         val tracer = Kamon.buildSpan("memstore-recover-index-latency")
@@ -500,6 +500,7 @@ class TimeSeriesShard(val dataset: Dataset,
           .onComplete { _ =>
             tracer.finish()
           }(indexSched)
+        Task.unit
       })
       logger.info(s"executing observable")
       f.toListL.runAsync(recoverySched).onComplete(_ => {
