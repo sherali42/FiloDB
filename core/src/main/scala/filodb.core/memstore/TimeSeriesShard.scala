@@ -468,56 +468,59 @@ class TimeSeriesShard(val dataset: Dataset,
     val p = Promise[Unit]()
     Future {
       assertThreadName(IngestSchedName)
-      val tracer = Kamon.buildSpan("memstore-recover-index-latency")
-        .withTag("dataset", dataset.name)
-        .withTag("shard", shardNum).start()
+      val f = Observable.fromIterable(0 until shardsToRecover).map (shard => {
+        val indexSched = Scheduler.singleThread(s"indexSched-${dataset.ref}-$shard",
+          reporter = UncaughtExceptionReporter(logger.error("Uncaught Exception in TimeSeriesShard.ingestSched", _)))
+        val tracer = Kamon.buildSpan("memstore-recover-index-latency")
+          .withTag("dataset", dataset.name)
+          .withTag("shard", shard).start()
 
-      /* We need this map to track partKey->partId because lucene index cannot be looked up
-       using partKey efficiently, and more importantly, it is eventually consistent.
-        The map and contents will be garbage collected after we are done with recovery */
-      val partIdMap = debox.Map.empty[BytesRef, Int]
+        /* We need this map to track partKey->partId because lucene index cannot be looked up
+         using partKey efficiently, and more importantly, it is eventually consistent.
+          The map and contents will be garbage collected after we are done with recovery */
+        val partIdMap = debox.Map.empty[BytesRef, Int]
 
-      logger.info(s"Recovering timebuckets " +
-        s"for dataset=${dataset.ref} shards=$shardsToRecover ")
-      // go through the buckets in reverse order to first one wins and we need not rewrite
-      // entries in lucene
-      // no need to go into currentIndexTimeBucket since it is not present in cass
-      val timeBuckets = for {
-        shard <- 0 until shardsToRecover
-        tb <- shardToCurrentTBIndex.getOrElseUpdate(shard.toLong, currentIndexTimeBuckets) - 1 to
-          Math.max(0, shardToCurrentTBIndex.get(shard) - numTimeBucketsToRetain) by -1
-      } yield {
-        logger.info(s"fetch partkey for tb=$tb shard=$shard")
-        colStore.getPartKeyTimeBucket(dataset, shard, tb).map { b =>
-          new IndexData(tb, b.segmentId, RecordContainer(b.segment.array()))
+        logger.info(s"Recovering timebuckets " +
+          s"for dataset=${dataset.ref} shards=$shardsToRecover ")
+        // go through the buckets in reverse order to first one wins and we need not rewrite
+        // entries in lucene
+        // no need to go into currentIndexTimeBucket since it is not present in cass
+        val timeBuckets = for {
+          tb <- shardToCurrentTBIndex.getOrElseUpdate(shard.toLong, currentIndexTimeBuckets) - 1 to
+            Math.max(0, shardToCurrentTBIndex.get(shard) - numTimeBucketsToRetain) by -1
+        } yield {
+          logger.info(s"fetch partkey for tb=$tb shard=$shard")
+          colStore.getPartKeyTimeBucket(dataset, shard, tb).map { b =>
+            new IndexData(tb, b.segmentId, RecordContainer(b.segment.array()))
+          }
         }
-      }
-      Observable.flatten(timeBuckets: _*)
-        .foreach(tb => extractTimeBucket(tb, partIdMap))(recoverySched)
-        .map(_ => completeIndexRecovery())(recoverySched)
-        .onComplete { _ =>
-          tracer.finish()
-          p.success(())
-        }(ingestSched)
+        Observable.flatten(timeBuckets: _*)
+          .foreach(tb => extractTimeBucket(tb, partIdMap, shard))(indexSched)
+          .map(_ => completeIndexRecovery(shard))(indexSched)
+          .onComplete { _ =>
+            tracer.finish()
+          }(indexSched)
+      })
+      logger.info(s"executing observable")
+      f.toListL.runAsync(recoverySched).onComplete(_ => logger.info("recovery done!!!"); p.success())(ingestSched)
     }(ingestSched)
     p.future
   }
 
-  def completeIndexRecovery(): Unit = {
+  def completeIndexRecovery(shard: Int = shardNum): Unit = {
     assertThreadName(IngestSchedName)
     refreshPartKeyIndexBlocking()
     startFlushingIndex() // start flushing index now that we have recovered
-    logger.info(s"Bootstrapped index for dataset=${dataset.ref} shard=$shardNum")
+    logger.info(s"Bootstrapped index for dataset=${dataset.ref} shard=$shard")
   }
 
   // scalastyle:off method.length
-  private[memstore] def extractTimeBucket(segment: IndexData, partIdMap: debox.Map[BytesRef, Int]): Unit = {
+  private[memstore] def extractTimeBucket(segment: IndexData, partIdMap: debox.Map[BytesRef, Int], shard: Int = shardNum): Unit = {
     assertThreadName(IngestSchedName)
     logger.info(s"reached1 extractTimeBucket")
     var numRecordsProcessed = 0
     segment.records.iterate(indexTimeBucketSchema).foreach { row =>
       // read binary record and extract the indexable data fields
-      logger.info(s"reached2 extractTimeBucket")
       try {
         val startTime: Long = row.getLong(0)
         val endTime: Long = row.getLong(1)
@@ -566,7 +569,6 @@ class TimeSeriesShard(val dataset: Dataset,
           // add newly assigned partId to lucene index
           partId.foreach { partId =>
             partIdMap(partKeyBytesRef) = partId
-            logger.info(s"reached3 partKeyIndex")
             partKeyIndex.addPartKey(partKeyBaseOnHeap, partId, startTime, endTime,
               PartKeyLuceneIndex.unsafeOffsetToBytesRefOffset(partKeyOffset))(partKeyNumBytes)
             timeBucketBitmaps.get(segment.timeBucket).set(partId)
@@ -587,7 +589,7 @@ class TimeSeriesShard(val dataset: Dataset,
 
     }
     shardStats.indexRecoveryNumRecordsProcessed.increment(numRecordsProcessed)
-    logger.info(s"Recovered partKeys for dataset=${dataset.ref} shard=$shardNum" +
+    logger.info(s"Recovered partKeys for dataset=${dataset.ref} shard=$shard" +
       s" timebucket=${segment.timeBucket} segment=${segment.segment} numRecordsInBucket=$numRecordsProcessed" +
       s" numPartsInIndex=${partIdMap.size} numIngestingParts=${partitions.size}")
   }
