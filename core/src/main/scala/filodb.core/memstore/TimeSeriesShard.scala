@@ -493,8 +493,8 @@ class TimeSeriesShard(val dataset: Dataset,
         }
       }
       Observable.flatten(timeBuckets: _*)
-        .foreach(tb => extractTimeBucket(tb, partIdMap))(ingestSched)
-        .map(_ => completeIndexRecovery())(ingestSched)
+        .foreach(tb => extractTimeBucket(tb, partIdMap))(recoverySched)
+        .map(_ => completeIndexRecovery())(recoverySched)
         .onComplete { _ =>
           tracer.finish()
           p.success(())
