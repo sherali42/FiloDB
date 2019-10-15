@@ -486,8 +486,14 @@ class TimeSeriesShard(val dataset: Dataset,
 
   def completeIndexRecovery(): Unit = {
     assertThreadName(IngestSchedName)
-    refreshPartKeyIndexBlocking()
-    startFlushingIndex() // start flushing index now that we have recovered
+    logger.info(s"start Bootstrapping index for dataset=${dataset.ref} shard=$shardNum")
+    try {
+      refreshPartKeyIndexBlocking()
+      startFlushingIndex() // start flushing index now that we have recovered
+    } catch {
+      case e: Exception => logger.error("error in completeIndexRecovery", e)
+    }
+
     logger.info(s"Bootstrapped index for dataset=${dataset.ref} shard=$shardNum")
   }
 
