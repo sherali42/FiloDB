@@ -229,7 +229,7 @@ class TimeSeriesShard(val dataset: Dataset,
     */
   private final var _offset = Long.MinValue
 
-  private val partKeyIndex = TimeSeriesShard.getpartKeyIndex(dataset, storeConfig)
+  def partKeyIndex: PartKeyLuceneIndex = TimeSeriesShard.getpartKeyIndex(dataset, storeConfig)
 
   private val reclaimListener = new ReclaimListener {
     def onReclaim(metaAddr: Long, numBytes: Int): Unit = {
