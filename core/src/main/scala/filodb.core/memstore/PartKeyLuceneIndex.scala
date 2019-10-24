@@ -1,6 +1,7 @@
 package filodb.core.memstore
 
 import java.io.File
+import java.lang.Thread.State
 import java.util.PriorityQueue
 
 import scala.collection.JavaConverters._
@@ -147,8 +148,10 @@ class PartKeyLuceneIndex(dataset: Dataset,
   }
 
   def startFlushThread(): Unit = {
-    flushThread.start()
-    logger.info(s"Started flush thread for lucene index on dataset=${dataset.ref} shard=$shardNum")
+    if (State.NEW == flushThread.getState) {
+      flushThread.start()
+      logger.info(s"Started flush thread for lucene index on dataset=${dataset.ref} shard=$shardNum")
+    }
   }
 
   /**
@@ -422,7 +425,7 @@ class PartKeyLuceneIndex(dataset: Dataset,
     * @return
     */
   def refreshReadersBlocking(): Unit = {
-    searcherManager.maybeRefreshBlocking()
+    searcherManager.maybeRefresh()
     logger.info("Refreshed index searchers to make reads consistent")
   }
 
