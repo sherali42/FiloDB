@@ -422,7 +422,7 @@ class PartKeyLuceneIndex(dataset: Dataset,
     * @return
     */
   def refreshReadersBlocking(): Unit = {
-    searcherManager.maybeRefresh()
+    searcherManager.maybeRefreshBlocking()
     logger.info("Refreshed index searchers to make reads consistent")
   }
 
