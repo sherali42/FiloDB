@@ -1,14 +1,20 @@
 package filodb.standalone
 
+import scala.collection.JavaConverters._
 import scala.concurrent.duration._
 import scala.util.control.NonFatal
 
 import akka.actor.ActorRef
 import akka.cluster.Cluster
+import akka.dispatch.Futures
+import com.typesafe.scalalogging.StrictLogging
 
 import filodb.akkabootstrapper.AkkaBootstrapper
 import filodb.coordinator._
 import filodb.coordinator.client.LocalClient
+import filodb.core.{GlobalConfig, GlobalScheduler}
+import filodb.core.metadata.Dataset
+import filodb.core.store.StoreConfig
 import filodb.http.FiloHttpServer
 
 /**
@@ -86,7 +92,18 @@ class FiloServer(watcher: Option[ActorRef]) extends FilodbClusterNode {
   }
 }
 
-object FiloServer {
-  def main(args: Array[String]): Unit =
-    new FiloServer().start()
+object FiloServer extends StrictLogging {
+  def main(args: Array[String]): Unit = {
+    //implicit val global = ExecutionContext.global
+    import GlobalScheduler.globalImplicitScheduler
+    logger.info("starting the server...")
+    val dataset = Dataset.fromConfig(GlobalConfig.systemConfig)
+    val storeConfig = StoreConfig(GlobalConfig.systemConfig.getConfig("store-config"))
+    val indexLoader = new IndexLoader(dataset, storeConfig)
+    val futures = (for {
+      shard <- 0 until 256
+    } yield indexLoader.recoverIndex(shard)
+      .map(_ => logger.info(s"completed index recovery for shard=${shard}"))).asJava
+    Futures.sequence(futures, globalImplicitScheduler).onComplete(_ => logger.info("completed loading index"))
+  }
 }
