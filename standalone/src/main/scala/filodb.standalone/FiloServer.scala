@@ -7,6 +7,7 @@ import scala.util.control.NonFatal
 import akka.actor.ActorRef
 import akka.cluster.Cluster
 import akka.dispatch.Futures
+import com.typesafe.config.ConfigFactory
 import com.typesafe.scalalogging.StrictLogging
 
 import filodb.akkabootstrapper.AkkaBootstrapper
@@ -16,6 +17,7 @@ import filodb.core.{GlobalConfig, GlobalScheduler}
 import filodb.core.metadata.Dataset
 import filodb.core.store.StoreConfig
 import filodb.http.FiloHttpServer
+import net.ceedubs.ficus.Ficus._
 
 /**
  * FiloServer starts a "standalone" FiloDB server which can ingest and support queries through the Akka
@@ -93,12 +95,15 @@ class FiloServer(watcher: Option[ActorRef]) extends FilodbClusterNode {
 }
 
 object FiloServer extends StrictLogging {
+  lazy val config = GlobalConfig.systemConfig
   def main(args: Array[String]): Unit = {
     //implicit val global = ExecutionContext.global
     import GlobalScheduler.globalImplicitScheduler
     logger.info("starting the server...")
-    val dataset = Dataset.fromConfig(GlobalConfig.systemConfig)
-    val storeConfig = StoreConfig(GlobalConfig.systemConfig.getConfig("store-config"))
+    val datasetConfigFiles = config.as[Seq[String]]("dataset-configs")
+    val datasetConfig = ConfigFactory.parseFile(new java.io.File(datasetConfigFiles(0)))
+    val dataset = Dataset.fromConfig(datasetConfig)
+    val storeConfig = StoreConfig(config.getConfig("store-config"))
     val indexLoader = new IndexLoader(dataset, storeConfig)
     val futures = (for {
       shard <- 0 until 256
