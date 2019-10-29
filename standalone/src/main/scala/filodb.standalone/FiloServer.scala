@@ -100,7 +100,9 @@ object FiloServer extends StrictLogging {
     //implicit val global = ExecutionContext.global
     import GlobalScheduler.globalImplicitScheduler
     logger.info("starting the server...")
-    val datasetConfigFiles = config.as[Seq[String]]("filodb.dataset-configs")
+    val filodbConfig = config.getConfig("filodb")
+    logger.info(s"filodb-config $filodbConfig")
+    val datasetConfigFiles = filodbConfig.as[Seq[String]]("dataset-configs")
     val datasetConfig = ConfigFactory.parseFile(new java.io.File(datasetConfigFiles(0)))
     val dataset = Dataset.fromConfig(datasetConfig)
     val storeConfig = StoreConfig(datasetConfig.getConfig("sourceconfig.store"))
