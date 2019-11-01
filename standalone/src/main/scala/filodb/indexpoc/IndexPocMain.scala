@@ -80,8 +80,10 @@ object IndexPocMain extends App with StrictLogging {
 
   logger.info(s"Min = $min ns")
   logger.info(s"Max = $max ns")
+  logger.info(s"Avg = ${sum/count} ns")
   logger.info(s"Sum = $sum ns")
   logger.info(s"Cnt = $count")
 
+  Thread.sleep(Long.MaxValue)
 }
 
