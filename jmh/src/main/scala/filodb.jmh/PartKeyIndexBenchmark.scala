@@ -8,7 +8,7 @@ import ch.qos.logback.classic.{Level, Logger}
 import org.openjdk.jmh.annotations._
 import scalaxy.loops._
 
-import filodb.core.TestData
+import scala.concurrent.duration._
 import filodb.core.binaryrecord2.RecordBuilder
 import filodb.core.memstore.PartKeyLuceneIndex
 import filodb.core.query.{ColumnFilter, Filter}
@@ -22,7 +22,7 @@ class PartKeyIndexBenchmark {
   org.slf4j.LoggerFactory.getLogger("filodb").asInstanceOf[Logger].setLevel(Level.ERROR)
 
   val dataset = FormatConversion.dataset
-  val partKeyIndex = new PartKeyLuceneIndex(dataset, 0, TestData.storeConf)
+  val partKeyIndex = new PartKeyLuceneIndex(dataset, 0, 2.minutes)
   val numSeries = 1000000
   val partKeyData = TestTimeseriesProducer.timeSeriesData(0, numSeries) take numSeries
   val partKeyBuilder = new RecordBuilder(MemFactory.onHeapFactory, dataset.partKeySchema)

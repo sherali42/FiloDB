@@ -1,11 +1,11 @@
 package filodb.core.memstore
 
 import java.io.File
-import java.lang.Thread.State
 import java.util.PriorityQueue
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.HashSet
+import scala.concurrent.duration.FiniteDuration
 
 import com.googlecode.javaewah.{EWAHCompressedBitmap, IntIterator}
 import com.typesafe.scalalogging.StrictLogging
@@ -28,7 +28,6 @@ import filodb.core.metadata.Column.ColumnType.{MapColumn, StringColumn}
 import filodb.core.metadata.Dataset
 import filodb.core.query.{ColumnFilter, Filter}
 import filodb.core.query.Filter._
-import filodb.core.store.StoreConfig
 import filodb.memory.{BinaryRegionLarge, UTF8StringMedium}
 import filodb.memory.format.{UnsafeUtils, ZeroCopyUTF8String => UTF8Str}
 
@@ -67,8 +66,9 @@ final case class TermInfo(term: UTF8Str, freq: Int)
 
 class PartKeyLuceneIndex(dataset: Dataset,
                          shardNum: Int,
-                         storeConfig: StoreConfig,
-                         diskLocation: Option[File] = None) extends StrictLogging {
+                         retention: FiniteDuration, // only used to calculate fallback startTime
+                         diskLocation: Option[File] = None
+                        ) extends StrictLogging {
 
   import PartKeyLuceneIndex._
 
@@ -84,7 +84,7 @@ class PartKeyLuceneIndex(dataset: Dataset,
   config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND)
 
   private val endTimeSort = new Sort(new SortField(END_TIME, SortField.Type.LONG),
-                                     new SortField(START_TIME, SortField.Type.LONG))
+    new SortField(START_TIME, SortField.Type.LONG))
   config.setIndexSort(endTimeSort)
   private val indexWriter = new IndexWriter(mMapDirectory, config)
 
@@ -95,21 +95,18 @@ class PartKeyLuceneIndex(dataset: Dataset,
   //scalastyle:on
 
   //start this thread to flush the segments and refresh the searcher every specific time period
-  private val flushThread = new ControlledRealTimeReopenThread(indexWriter,
-                                                               searcherManager,
-                                                               storeConfig.partIndexFlushMaxDelaySeconds,
-                                                               storeConfig.partIndexFlushMinDelaySeconds)
+  private var flushThread: ControlledRealTimeReopenThread[IndexSearcher] = _
   private val luceneDocument = new ThreadLocal[Document]()
 
   private val mapConsumer = new MapItemConsumer {
     def consume(keyBase: Any, keyOffset: Long, valueBase: Any, valueOffset: Long, index: Int): Unit = {
       import filodb.core._
       val key = utf8ToStrCache.getOrElseUpdate(new UTF8Str(keyBase, keyOffset + 2,
-                                                           UTF8StringMedium.numBytes(keyBase, keyOffset)),
-                                               _.toString)
+        UTF8StringMedium.numBytes(keyBase, keyOffset)),
+        _.toString)
       val value = new BytesRef(valueBase.asInstanceOf[Array[Byte]],
-                               unsafeOffsetToBytesRefOffset(valueOffset + 2), // add 2 to move past numBytes
-                               UTF8StringMedium.numBytes(valueBase, valueOffset))
+        unsafeOffsetToBytesRefOffset(valueOffset + 2), // add 2 to move past numBytes
+        UTF8StringMedium.numBytes(valueBase, valueOffset))
       addIndexEntry(key, value, index)
     }
   }
@@ -147,11 +144,14 @@ class PartKeyLuceneIndex(dataset: Dataset,
     indexWriter.commit()
   }
 
-  def startFlushThread(): Unit = {
-    if (State.NEW == flushThread.getState) {
-      flushThread.start()
-      logger.info(s"Started flush thread for lucene index on dataset=${dataset.ref} shard=$shardNum")
-    }
+  def startFlushThread(flushDelayMinSeconds: Int, flushDelayMaxSeconds: Int): Unit = {
+
+    flushThread = new ControlledRealTimeReopenThread(indexWriter,
+      searcherManager,
+      flushDelayMaxSeconds,
+      flushDelayMinSeconds)
+    flushThread.start()
+    logger.info(s"Started flush thread for lucene index on dataset=${dataset.ref} shard=$shardNum")
   }
 
   /**
@@ -277,7 +277,7 @@ class PartKeyLuceneIndex(dataset: Dataset,
                 (partKeyNumBytes: Int = partKeyOnHeapBytes.length): Unit = {
     val document = makeDocument(partKeyOnHeapBytes, partKeyBytesRefOffset, partKeyNumBytes, partId, startTime, endTime)
     logger.debug(s"Adding document ${partKeyString(partId, partKeyOnHeapBytes, partKeyBytesRefOffset)} " +
-                 s"with startTime=$startTime endTime=$endTime into dataset=${dataset.ref} shard=$shardNum")
+      s"with startTime=$startTime endTime=$endTime into dataset=${dataset.ref} shard=$shardNum")
     indexWriter.addDocument(document)
   }
 
@@ -289,7 +289,7 @@ class PartKeyLuceneIndex(dataset: Dataset,
                    (partKeyNumBytes: Int = partKeyOnHeapBytes.length): Unit = {
     val document = makeDocument(partKeyOnHeapBytes, partKeyBytesRefOffset, partKeyNumBytes, partId, startTime, endTime)
     logger.debug(s"Upserting document ${partKeyString(partId, partKeyOnHeapBytes, partKeyBytesRefOffset)} " +
-                 s"with startTime=$startTime endTime=$endTime into dataset=${dataset.ref} shard=$shardNum")
+      s"with startTime=$startTime endTime=$endTime into dataset=${dataset.ref} shard=$shardNum")
     indexWriter.updateDocument(new Term(PART_ID, partId.toString), document)
   }
 
@@ -406,17 +406,17 @@ class PartKeyLuceneIndex(dataset: Dataset,
                                partId: Int,
                                endTime: Long = Long.MaxValue,
                                partKeyBytesRefOffset: Int = 0)
-                               (partKeyNumBytes: Int = partKeyOnHeapBytes.length): Unit = {
+                              (partKeyNumBytes: Int = partKeyOnHeapBytes.length): Unit = {
     var startTime = startTimeFromPartId(partId) // look up index for old start time
     if (startTime == NOT_FOUND) {
-      startTime = System.currentTimeMillis() - storeConfig.demandPagedRetentionPeriod.toMillis
+      startTime = System.currentTimeMillis() - retention.toMillis
       logger.warn(s"Could not find in Lucene startTime for partId=$partId in dataset=${dataset.ref}. Using " +
         s"$startTime instead.", new IllegalStateException()) // assume this time series started retention period ago
     }
     val updatedDoc = makeDocument(partKeyOnHeapBytes, partKeyBytesRefOffset, partKeyNumBytes,
       partId, startTime, endTime)
     logger.debug(s"Updating document ${partKeyString(partId, partKeyOnHeapBytes, partKeyBytesRefOffset)} " +
-                 s"with startTime=$startTime endTime=$endTime into dataset=${dataset.ref} shard=$shardNum")
+      s"with startTime=$startTime endTime=$endTime into dataset=${dataset.ref} shard=$shardNum")
     indexWriter.updateDocument(new Term(PART_ID, partId.toString), updatedDoc)
   }
 
@@ -425,7 +425,7 @@ class PartKeyLuceneIndex(dataset: Dataset,
     * @return
     */
   def refreshReadersBlocking(): Unit = {
-    searcherManager.maybeRefresh()
+    searcherManager.maybeRefreshBlocking()
     logger.info("Refreshed index searchers to make reads consistent")
   }
 
@@ -475,8 +475,8 @@ class PartKeyLuceneIndex(dataset: Dataset,
   }
 
   def partIdsFromFilters2(columnFilters: Seq[ColumnFilter],
-                         startTime: Long,
-                         endTime: Long): EWAHCompressedBitmap = {
+                          startTime: Long,
+                          endTime: Long): EWAHCompressedBitmap = {
     val partKeySpan = Kamon.buildSpan("index-partition-lookup-latency")
       .withTag("dataset", dataset.name)
       .withTag("shard", shardNum)
