@@ -14,18 +14,24 @@ import com.typesafe.scalalogging.StrictLogging
 object GlobalConfig extends StrictLogging {
 
   val systemConfig: Config = {
-    ConfigFactory.invalidateCaches()
+    try {
+      ConfigFactory.invalidateCaches()
 
-    val customConfig = sys.props.get("filodb.config.file").orElse(sys.props.get("config.file"))
-                                .map { path => ConfigFactory.parseFile(new java.io.File(path)) }
-                                .getOrElse(ConfigFactory.empty)
-    // ConfigFactory.parseResources() does NOT work in Spark 1.4.1 executors
-    // and only the below works.
-    // filodb-defaults.conf sets cluster.roles=["worker"] as the default
-    val defaultsFromUrl = ConfigFactory.load("filodb-defaults")
-    ConfigFactory.defaultOverrides.withFallback(customConfig) // spark overrides cluster.roles, cli doesn't
-                 .withFallback(defaultsFromUrl)
-                 .withFallback(ConfigFactory.defaultReference())
-                 .resolve()
+      val customConfig = sys.props.get("filodb.config.file").orElse(sys.props.get("config.file"))
+        .map { path => ConfigFactory.parseFile(new java.io.File(path)) }
+        .getOrElse(ConfigFactory.empty)
+      // ConfigFactory.parseResources() does NOT work in Spark 1.4.1 executors
+      // and only the below works.
+      // filodb-defaults.conf sets cluster.roles=["worker"] as the default
+      val defaultsFromUrl = ConfigFactory.load("filodb-defaults")
+      ConfigFactory.defaultOverrides.withFallback(customConfig) // spark overrides cluster.roles, cli doesn't
+        .withFallback(defaultsFromUrl)
+        .withFallback(ConfigFactory.defaultReference())
+        .resolve()
+    } catch {
+      case t: Throwable => logger.info("exception while loading config", t)
+        throw t
+    }
+
   }
 }
