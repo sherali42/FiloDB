@@ -495,6 +495,23 @@ class PartKeyLuceneIndex(dataset: Dataset,
     partKeySpan.finish()
     collector.result
   }
+
+  def partIdsFromFilters3(columnFilters: Seq[ColumnFilter],
+                          startTime: Long,
+                          endTime: Long): debox.Buffer[Int] = {
+    val booleanQuery = new BooleanQuery.Builder
+    columnFilters.foreach { filter =>
+      val q = leafFilter(filter.column, filter.filter)
+      booleanQuery.add(q, Occur.FILTER)
+    }
+    booleanQuery.add(LongPoint.newRangeQuery(START_TIME, 0, endTime), Occur.FILTER)
+    booleanQuery.add(LongPoint.newRangeQuery(END_TIME, startTime, Long.MaxValue), Occur.FILTER)
+    val query = booleanQuery.build()
+    logger.debug(s"Querying dataset=${dataset.ref} shard=$shardNum partKeyIndex with: $query")
+    val collector = new PartIdCollectorDebox() // passing zero for unlimited results
+    withNewSearcher(s => s.search(query, collector))
+    collector.result
+  }
 }
 
 class NumericDocValueCollector(docValueName: String) extends SimpleCollector {
@@ -646,6 +663,27 @@ class PartIdCollector extends SimpleCollector {
   }
 
   def intIterator(): IntIterator = result.intIterator()
+}
+
+
+class PartIdCollectorDebox extends SimpleCollector {
+  val result = debox.Buffer.empty[Int]
+  private var partIdDv: NumericDocValues = _
+
+  override def needsScores(): Boolean = false
+
+  override def doSetNextReader(context: LeafReaderContext): Unit = {
+    //set the subarray of the numeric values for all documents in the context
+    partIdDv = context.reader().getNumericDocValues(PartKeyLuceneIndex.PART_ID)
+  }
+
+  override def collect(doc: Int): Unit = {
+    if (partIdDv.advanceExact(doc)) {
+      result += partIdDv.longValue().toInt
+    } else {
+      throw new IllegalStateException("This shouldn't happen since every document should have a partIdDv")
+    }
+  }
 }
 
 class PartIdStartTimeCollector extends SimpleCollector {
