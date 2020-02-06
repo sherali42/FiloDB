@@ -55,6 +55,7 @@ object DSIndexJob extends StrictLogging with Instance {
   def updateDSPartKeyIndex(shard: Int, epochHour: Long): Unit = {
     import DSIndexJobSettings._
 
+    logger.info(s"task started shard=$shard hour=$epochHour")
     val rawDataSource = rawCassandraColStore
     val dsDtasource = downsampleCassandraColStore
     val highestDSResolution = rawDatasetIngestionConfig.downsampleConfig.resolutions.last // data retained longest
