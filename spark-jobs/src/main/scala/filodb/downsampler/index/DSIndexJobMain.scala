@@ -29,7 +29,7 @@ class IndexJobDriver(epochHour: Long) extends StrictLogging {
       .makeRDD(0 until numShards)
       .foreach(updateDSPartKeyIndex(_, hour))
 
-    spark.sparkContext.stop()
+    //spark.sparkContext.stop()
 
     logger.info(s"IndexUpdater Driver completed successfully")
   }
