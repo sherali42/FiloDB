@@ -4,6 +4,7 @@ import scala.concurrent.Await
 
 import com.typesafe.config.Config
 import com.typesafe.scalalogging.StrictLogging
+import kamon.Kamon
 import monix.execution.Scheduler
 
 import filodb.cassandra.FiloSessionProvider
@@ -25,6 +26,10 @@ object DSIndexJob extends StrictLogging with Instance {
 
   private val readSched = Scheduler.io("cass-index-read-sched")
   private val writeSched = Scheduler.io("cass-index-write-sched")
+
+  val taskCounter = Kamon.counter("num-tasks")
+  val completionCounter = Kamon.counter("num-completed-tasks")
+  val totalKeysCounter = Kamon.counter("total-partkey-updated")
 
   /**
     * Datasets to which we write downsampled data. Keyed by Downsample resolution.
@@ -55,6 +60,12 @@ object DSIndexJob extends StrictLogging with Instance {
   def updateDSPartKeyIndex(shard: Int, epochHour: Long): Unit = {
     import DSIndexJobSettings._
 
+    taskCounter.increment()
+
+    val span = Kamon.buildSpan("timetaken-index-migration")
+        .withTag("shard", shard)
+        .withTag("epochHour", epochHour)
+        .start()
     logger.info(s"task started shard=$shard hour=$epochHour")
     val rawDataSource = rawCassandraColStore
     val dsDtasource = downsampleCassandraColStore
@@ -69,6 +80,9 @@ object DSIndexJob extends StrictLogging with Instance {
         partKeys = pkRecords,
         diskTTLSeconds = dsJobsettings.ttlByResolution(highestDSResolution),
         writeToPkUTTable = false), cassWriteTimeout)
+      completionCounter.increment()
+      totalKeysCounter.increment(count)
+      span.finish()
       logger.info(s"Number of partitionKey written numPkeysWritten=$count shard=$shard hour=$epochHour")
     } catch {
       case e: Exception =>
