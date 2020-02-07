@@ -31,6 +31,8 @@ object DSIndexJob extends StrictLogging with Instance {
   val completionCounter = Kamon.counter("num-completed-tasks")
   val totalKeysCounter = Kamon.counter("total-partkey-updated")
 
+  Kamon.loadReportersFromConfig()
+
   /**
     * Datasets to which we write downsampled data. Keyed by Downsample resolution.
     */

@@ -1,11 +1,13 @@
 package filodb.downsampler.index
 
 import com.typesafe.scalalogging.StrictLogging
+import kamon.Kamon
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
 
 object DSIndexJobMain extends App {
   import DSIndexJobSettings._
+  Kamon.loadReportersFromConfig()
   val iu = new IndexJobDriver(hour() - 1) // Run for the previous hour
   val sparkConf = new SparkConf(loadDefaults = true)
   iu.run(sparkConf)
