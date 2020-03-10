@@ -147,7 +147,7 @@ final case class SetOperatorExec(queryContext: QueryContext,
       case QueryResult(_, schema, _) if rs == ResultSchema.empty =>
         schema     /// First schema, take as is
       case QueryResult(_, schema, _) =>
-        if (rs.hasSameColumnsAs(schema)) throw SchemaMismatch(rs.toString, schema.toString)
+        if (!rs.hasSameColumnsAs(schema)) throw SchemaMismatch(rs.toString, schema.toString)
         else rs
     }
   }
