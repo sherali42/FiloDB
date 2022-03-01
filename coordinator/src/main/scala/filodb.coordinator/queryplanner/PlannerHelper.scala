@@ -132,7 +132,7 @@ trait  PlannerHelper {
    def addAggregator(lp: Aggregate,
                      qContext: QueryContext,
                      toReduceLevel: PlanResult,
-                     forceInProcess: Boolean):
+                     forceInProcess: Boolean = false):
    LocalPartitionReduceAggregateExec = {
 
     // Now we have one exec plan per shard
@@ -190,7 +190,7 @@ trait  PlannerHelper {
   def materializeLimitFunction(qContext: QueryContext,
                                lp: ApplyLimitFunction,
                                forceInProcess: Boolean = false): PlanResult = {
-    val vectors = walkLogicalPlanTree(lp.vectors, qContext)
+    val vectors = walkLogicalPlanTree(lp.vectors, qContext, forceInProcess)
     if (vectors.plans.length > 1) {
       val targetActor = PlannerUtil.pickDispatcher(vectors.plans, forceInProcess)
       val topPlan = LocalPartitionDistConcatExec(qContext, targetActor, vectors.plans)
@@ -279,7 +279,7 @@ trait  PlannerHelper {
                                         window: Option[Long],
                                         offsetMs : Option[Long],
                                         sqww: SubqueryWithWindowing,
-                                        forceInProcess: Boolean
+                                        forceInProcess: Boolean = false
                                       ) : PlanResult = {
     // absent over time is essentially sum(last(series)) sent through AbsentFunctionMapper
     innerExecPlan.plans.foreach(
@@ -411,8 +411,8 @@ object PlannerUtil extends StrictLogging {
   }
 
   /**
-   * Picks one dispatcher randomly from child exec plans passed in as parameter
-   * TODO(a_theimer)
+   * If forceInProcess is false, picks one dispatcher randomly from child exec plans passed in as parameter.
+   * Else returns an InProcessPlanDispatcher.
    */
   def pickDispatcher(children: Seq[ExecPlan], forceInProcess: Boolean): PlanDispatcher = {
     if (forceInProcess) {

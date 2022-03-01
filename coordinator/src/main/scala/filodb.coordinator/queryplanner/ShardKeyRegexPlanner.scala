@@ -159,7 +159,7 @@ class ShardKeyRegexPlanner(val dataset: Dataset,
         // be InProcessPlanDispatcher and adding the current aggregate using addAggregate will use the same dispatcher
         // If the underlying plan however is not multi partition, adding the aggregator using addAggregator will
         // use the same dispatcher
-        addAggregator(aggregate, queryContext, PlanResult(Seq(childPlan)), forceInProcess = false)
+        addAggregator(aggregate, queryContext, PlanResult(Seq(childPlan)))
     } else {
       val execPlans = generateExecWithoutRegex(aggregate,
         LogicalPlan.getNonMetricShardKeyFilters(aggregate, dataset.options.nonMetricShardColumns).head, queryContext)

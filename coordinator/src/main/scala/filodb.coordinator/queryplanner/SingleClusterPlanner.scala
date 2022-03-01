@@ -56,7 +56,7 @@ class SingleClusterPlanner(val dataset: Dataset,
 
   private def dispatcherForShard(shard: Int, forceInProcess: Boolean): PlanDispatcher = {
     if (forceInProcess) {
-      return InProcessPlanDispatcher(EmptyQueryConfig)
+      return InProcessPlanDispatcher(EmptyQueryConfig)  // TODO(a_theimer)
     }
     val targetActor = shardMapperFunc.coordForShard(shard)
     if (targetActor == ActorRef.noSender) {
@@ -310,7 +310,7 @@ class SingleClusterPlanner(val dataset: Dataset,
   override def materializeBinaryJoin(qContext: QueryContext,
                                      lp: BinaryJoin,
                                      forceInProcess: Boolean): PlanResult = {
-    // TODO(a_theimer): could probably give this section its own method and generalize
+    // TODO: could probably give this section its own method and generalize
     //   to other non-leaf plans (especially since repeat tree traversals are probably
     //   no big deal w.r.t. performance).
 
