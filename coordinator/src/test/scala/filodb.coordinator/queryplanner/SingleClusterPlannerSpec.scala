@@ -456,99 +456,118 @@ class SingleClusterPlannerSpec extends AnyFunSpec with Matchers with ScalaFuture
     binaryJoinNode.children.forall(!_.dispatcher.isInstanceOf[InProcessPlanDispatcher]) shouldEqual true
   }
 
-  it ("should force an InProcessDispatcher for BinaryJoinExec children when all span the same shard " +
+  it ("should force an InProcessDispatcher for BinaryJoin/SetOp children when all span the same shard " +
         "and labels match target schema") {
-    val lp = Parser.queryRangeToLogicalPlan("""(foo{job="bar"} + baz{job="bar"}) + bam{job="bar"}""",
-      TimeStepParams(20000, 100, 30000))
-    def spread(filter: Seq[ColumnFilter]): Seq[SpreadChange] = {
-      Seq(SpreadChange(0, 2))
-    }
-    def targetSchema(filter: Seq[ColumnFilter]): Seq[TargetSchemaChange] = {
-      Seq(TargetSchemaChange(0, Seq("job")))
-    }
-    def validateTree(ep: ExecPlan, shouldBeInProcess: Boolean): Unit = {
-      ep.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual shouldBeInProcess
-      ep.children.foreach{ child =>
-        validateTree(child, shouldBeInProcess)
+    val queries = Seq(
+      """(foo{job="bar"} + baz{job="bar"}) - bam{job="bar"}""",
+      """(foo{job="bar"} and baz{job="bar"}) or bam{job="bar"}"""
+    )
+    queries.foreach{ q =>
+      val lp = Parser.queryRangeToLogicalPlan(q, TimeStepParams(20000, 100, 30000))
+      def spread(filter: Seq[ColumnFilter]): Seq[SpreadChange] = {
+        Seq(SpreadChange(0, 2))
       }
+      def targetSchema(filter: Seq[ColumnFilter]): Seq[TargetSchemaChange] = {
+        Seq(TargetSchemaChange(0, Seq("job")))
+      }
+      def validateTree(ep: ExecPlan, shouldBeInProcess: Boolean): Unit = {
+        ep.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual shouldBeInProcess
+        ep.children.foreach{ child =>
+          validateTree(child, shouldBeInProcess)
+        }
+      }
+      val execPlan = engine.materialize(lp, QueryContext(promQlQueryParams, plannerParams = PlannerParams
+      (spreadOverride = Some(FunctionalSpreadProvider(spread)),
+        targetSchema = Some(FunctionalTargetSchemaProvider(targetSchema)), queryTimeoutMillis = 1000000)))
+      execPlan.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual false
+      execPlan.children.foreach(validateTree(_, true))
     }
-    val execPlan = engine.materialize(lp, QueryContext(promQlQueryParams, plannerParams = PlannerParams
-    (spreadOverride = Some(FunctionalSpreadProvider(spread)),
-      targetSchema = Some(FunctionalTargetSchemaProvider(targetSchema)), queryTimeoutMillis = 1000000)))
-    execPlan.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual false
-    execPlan.children.foreach(validateTree(_, true))
   }
 
-  it ("should not force an InProcessDispatcher for any BinaryJoinExec child when no multi-plan subtree " +
+  it ("should not force an InProcessDispatcher for any BinaryJoin/SetOp child when no multi-plan subtree " +
         "is contained within a single shard") {
-    val lp = Parser.queryRangeToLogicalPlan("""(foo{job="bat"} + baz{job="bar"}) + bam{job="bar"}""",
-      TimeStepParams(20000, 100, 30000))
-    def spread(filter: Seq[ColumnFilter]): Seq[SpreadChange] = {
-      Seq(SpreadChange(0, 2))
-    }
-    def targetSchema(filter: Seq[ColumnFilter]): Seq[TargetSchemaChange] = {
-      Seq(TargetSchemaChange(0, Seq("job")))
-    }
-    def validateTree(ep: ExecPlan, shouldBeInProcess: Boolean): Unit = {
-      ep.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual shouldBeInProcess
-      ep.children.foreach{ child =>
-        validateTree(child, shouldBeInProcess)
+    val queries = Seq(
+      """(foo{job="bat"} + baz{job="bar"}) - bam{job="bar"}""",
+      """(foo{job="bat"} and baz{job="bar"}) or bam{job="bar"}"""
+    )
+    queries.foreach{ q =>
+      val lp = Parser.queryRangeToLogicalPlan(q, TimeStepParams(20000, 100, 30000))
+      def spread(filter: Seq[ColumnFilter]): Seq[SpreadChange] = {
+        Seq(SpreadChange(0, 2))
       }
+      def targetSchema(filter: Seq[ColumnFilter]): Seq[TargetSchemaChange] = {
+        Seq(TargetSchemaChange(0, Seq("job")))
+      }
+      def validateTree(ep: ExecPlan, shouldBeInProcess: Boolean): Unit = {
+        ep.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual shouldBeInProcess
+        ep.children.foreach{ child =>
+          validateTree(child, shouldBeInProcess)
+        }
+      }
+      val execPlan = engine.materialize(lp, QueryContext(promQlQueryParams, plannerParams = PlannerParams
+      (spreadOverride = Some(FunctionalSpreadProvider(spread)),
+        targetSchema = Some(FunctionalTargetSchemaProvider(targetSchema)), queryTimeoutMillis = 1000000)))
+      validateTree(execPlan, false)
     }
-    val execPlan = engine.materialize(lp, QueryContext(promQlQueryParams, plannerParams = PlannerParams
-    (spreadOverride = Some(FunctionalSpreadProvider(spread)),
-      targetSchema = Some(FunctionalTargetSchemaProvider(targetSchema)), queryTimeoutMillis = 1000000)))
-    validateTree(execPlan, false)
   }
 
-  it ("should force an InProcessDispatcher for all children of a BinaryJoinExec subtree that spans a single shard " +
+  it ("should force an InProcessDispatcher for all children of a BinaryJoin/SetOp subtree that spans a single shard " +
         "where all target schema labels are present") {
-    val lp = Parser.queryRangeToLogicalPlan("""(foo{job="bat"} + baz{job="bat"}) + bam{job="bar"}""",
-      TimeStepParams(20000, 100, 30000))
-    def spread(filter: Seq[ColumnFilter]): Seq[SpreadChange] = {
-      Seq(SpreadChange(0, 2))
-    }
-    def targetSchema(filter: Seq[ColumnFilter]): Seq[TargetSchemaChange] = {
-      Seq(TargetSchemaChange(0, Seq("job")))
-    }
-    def validateTree(ep: ExecPlan, shouldBeInProcess: Boolean): Unit = {
-      ep.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual shouldBeInProcess
-      ep.children.foreach{ child =>
-        validateTree(child, shouldBeInProcess)
+    val queries = Seq(
+      """(foo{job="bat"} + baz{job="bat"}) - bam{job="bar"}""",
+      """(foo{job="bat"} and baz{job="bat"}) or bam{job="bar"}"""
+    )
+    queries.foreach{ q =>
+      val lp = Parser.queryRangeToLogicalPlan(q, TimeStepParams(20000, 100, 30000))
+      def spread(filter: Seq[ColumnFilter]): Seq[SpreadChange] = {
+        Seq(SpreadChange(0, 2))
       }
+      def targetSchema(filter: Seq[ColumnFilter]): Seq[TargetSchemaChange] = {
+        Seq(TargetSchemaChange(0, Seq("job")))
+      }
+      def validateTree(ep: ExecPlan, shouldBeInProcess: Boolean): Unit = {
+        ep.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual shouldBeInProcess
+        ep.children.foreach{ child =>
+          validateTree(child, shouldBeInProcess)
+        }
+      }
+      val execPlan = engine.materialize(lp, QueryContext(promQlQueryParams, plannerParams = PlannerParams
+      (spreadOverride = Some(FunctionalSpreadProvider(spread)),
+        targetSchema = Some(FunctionalTargetSchemaProvider(targetSchema)), queryTimeoutMillis = 1000000)))
+      execPlan.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual false
+      execPlan.children.size shouldEqual 2
+      validateTree(execPlan.children(1), false)
+      // only the children of the left subtree should be in-process
+      execPlan.children(0).children.size shouldEqual 2
+      execPlan.children(0).dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual false
+      execPlan.children(0).children.foreach(_.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual true)
     }
-    val execPlan = engine.materialize(lp, QueryContext(promQlQueryParams, plannerParams = PlannerParams
-    (spreadOverride = Some(FunctionalSpreadProvider(spread)),
-      targetSchema = Some(FunctionalTargetSchemaProvider(targetSchema)), queryTimeoutMillis = 1000000)))
-    execPlan.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual false
-    execPlan.children.size shouldEqual 2
-    validateTree(execPlan.children(1), false)
-    // only the children of the left subtree should be in-process
-    execPlan.children(0).children.size shouldEqual 2
-    execPlan.children(0).dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual false
-    execPlan.children(0).children.foreach(_.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual true)
   }
 
-  it ("should not force an InProcessDispatcher for BinaryJoinExec children if labels do not match target schema") {
-    val lp = Parser.queryRangeToLogicalPlan(
-    """(foo{job="bar"} + baz{job="bar", inst="hello"}) + bam{job="bar", inst="hello"}""",
-      TimeStepParams(20000, 100, 30000))
-    def spread(filter: Seq[ColumnFilter]): Seq[SpreadChange] = {
-      Seq(SpreadChange(0, 2))
-    }
-    def targetSchema(filter: Seq[ColumnFilter]): Seq[TargetSchemaChange] = {
-      Seq(TargetSchemaChange(0, Seq("inst")))
-    }
-    def validateTree(ep: ExecPlan, shouldBeInProcess: Boolean): Unit = {
-      ep.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual shouldBeInProcess
-      ep.children.foreach{ child =>
-        validateTree(child, shouldBeInProcess)
+  it ("should not force an InProcessDispatcher for BinaryJoin/SetOp children if labels do not match target schema") {
+    val queries = Seq(
+      """(foo{job="bar"} + baz{job="bar", inst="hello"}) - bam{job="bar", inst="hello"}""",
+      """(foo{job="bar"} and baz{job="bar", inst="hello"}) or bam{job="bar", inst="hello"}"""
+    )
+    queries.foreach{ q =>
+      val lp = Parser.queryRangeToLogicalPlan(q, TimeStepParams(20000, 100, 30000))
+      def spread(filter: Seq[ColumnFilter]): Seq[SpreadChange] = {
+        Seq(SpreadChange(0, 2))
       }
+      def targetSchema(filter: Seq[ColumnFilter]): Seq[TargetSchemaChange] = {
+        Seq(TargetSchemaChange(0, Seq("inst")))
+      }
+      def validateTree(ep: ExecPlan, shouldBeInProcess: Boolean): Unit = {
+        ep.dispatcher.isInstanceOf[InProcessPlanDispatcher] shouldEqual shouldBeInProcess
+        ep.children.foreach{ child =>
+          validateTree(child, shouldBeInProcess)
+        }
+      }
+      val execPlan = engine.materialize(lp, QueryContext(promQlQueryParams, plannerParams = PlannerParams
+      (spreadOverride = Some(FunctionalSpreadProvider(spread)),
+        targetSchema = Some(FunctionalTargetSchemaProvider(targetSchema)), queryTimeoutMillis = 1000000)))
+      validateTree(execPlan, false)
     }
-    val execPlan = engine.materialize(lp, QueryContext(promQlQueryParams, plannerParams = PlannerParams
-    (spreadOverride = Some(FunctionalSpreadProvider(spread)),
-      targetSchema = Some(FunctionalTargetSchemaProvider(targetSchema)), queryTimeoutMillis = 1000000)))
-    validateTree(execPlan, false)
   }
 
   // end
