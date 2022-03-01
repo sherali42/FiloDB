@@ -56,7 +56,7 @@ class SingleClusterPlanner(val dataset: Dataset,
 
   private def dispatcherForShard(shard: Int, forceInProcess: Boolean): PlanDispatcher = {
     if (forceInProcess) {
-      return InProcessPlanDispatcher(EmptyQueryConfig)  // TODO(a_theimer)
+      return InProcessPlanDispatcher(queryConfig)
     }
     val targetActor = shardMapperFunc.coordForShard(shard)
     if (targetActor == ActorRef.noSender) {
@@ -113,7 +113,7 @@ class SingleClusterPlanner(val dataset: Dataset,
         case Seq(one) => materializeTimeSplitPlan(one, qContext, forceInProcess = false)
         case many =>
           val materializedPlans = many.map(materializeTimeSplitPlan(_, qContext, forceInProcess = false))
-          val targetActor = PlannerUtil.pickDispatcher(materializedPlans, forceInProcess = false)
+          val targetActor = pickDispatcher(materializedPlans, forceInProcess = false)
 
           // create SplitLocalPartitionDistConcatExec that will execute child execplanss sequentially and stitches
           // results back with StitchRvsMapper transformer.
@@ -136,7 +136,7 @@ class SingleClusterPlanner(val dataset: Dataset,
         if (stitch) justOne.addRangeVectorTransformer(StitchRvsMapper(rvRangeFromPlan(logicalPlan)))
         justOne
       case PlanResult(many, stitch) =>
-        val targetActor = PlannerUtil.pickDispatcher(many, forceInProcess)
+        val targetActor = pickDispatcher(many, forceInProcess)
         many.head match {
           case _: LabelValuesExec => LabelValuesDistConcatExec(qContext, targetActor, many)
           case _: LabelNamesExec => LabelNamesDistConcatExec(qContext, targetActor, many)
@@ -342,11 +342,11 @@ class SingleClusterPlanner(val dataset: Dataset,
     val forceChildrenInProcess = singleShardDispatcherOpt.isDefined
     val lhs = walkLogicalPlanTree(lp.lhs, qContext, forceChildrenInProcess)
     val stitchedLhs = if (lhs.needsStitch) Seq(StitchRvsExec(qContext,
-      PlannerUtil.pickDispatcher(lhs.plans, forceInProcess), rvRangeFromPlan(lp), lhs.plans))
+      pickDispatcher(lhs.plans, forceInProcess), rvRangeFromPlan(lp), lhs.plans))
     else lhs.plans
     val rhs = walkLogicalPlanTree(lp.rhs, qContext, forceChildrenInProcess)
     val stitchedRhs = if (rhs.needsStitch) Seq(StitchRvsExec(qContext,
-      PlannerUtil.pickDispatcher(rhs.plans, forceInProcess), rvRangeFromPlan(lp), rhs.plans))
+      pickDispatcher(rhs.plans, forceInProcess), rvRangeFromPlan(lp), rhs.plans))
     else rhs.plans
 
     // TODO Currently we create separate exec plan node for stitching.
@@ -356,7 +356,7 @@ class SingleClusterPlanner(val dataset: Dataset,
     // In the interest of keeping it simple, deferring decorations to the ExecPlan. Add only if needed after measuring.
 
     val targetActor = singleShardDispatcherOpt.getOrElse(
-      PlannerUtil.pickDispatcher(stitchedLhs ++ stitchedRhs, forceInProcess))
+      pickDispatcher(stitchedLhs ++ stitchedRhs, forceInProcess))
     val joined = if (lp.operator.isInstanceOf[SetOperator])
       Seq(exec.SetOperatorExec(qContext, targetActor, stitchedLhs, stitchedRhs, lp.operator,
         LogicalPlanUtils.renameLabels(lp.on, dsOptions.metricColumn),

@@ -93,7 +93,7 @@ trait  PlannerHelper {
                                      forceInProcess: Boolean = false): PlanResult = {
       val vectors = walkLogicalPlanTree(lp.vectors, qContext, forceInProcess)
       if (vectors.plans.length > 1) {
-        val targetActor = PlannerUtil.pickDispatcher(vectors.plans, forceInProcess)
+        val targetActor = pickDispatcher(vectors.plans, forceInProcess)
         val topPlan = LocalPartitionDistConcatExec(qContext, targetActor, vectors.plans)
         topPlan.addRangeVectorTransformer(SortFunctionMapper(lp.function))
         PlanResult(Seq(topPlan), vectors.needsStitch)
@@ -108,7 +108,7 @@ trait  PlannerHelper {
                               forceInProcess: Boolean = false): PlanResult = {
       val vectors = walkLogicalPlanTree(lp.vectors, qContext, forceInProcess)
       if (vectors.plans.length > 1) {
-        val targetActor = PlannerUtil.pickDispatcher(vectors.plans, forceInProcess)
+        val targetActor = pickDispatcher(vectors.plans, forceInProcess)
         val topPlan = LocalPartitionDistConcatExec(qContext, targetActor, vectors.plans)
         topPlan.addRangeVectorTransformer(ScalarFunctionMapper(lp.function,
           RangeParams(lp.startMs, lp.stepMs, lp.endMs)))
@@ -163,7 +163,7 @@ trait  PlannerHelper {
         }.toList
       } else toReduceLevel.plans
 
-    val reduceDispatcher = PlannerUtil.pickDispatcher(toReduceLevel2, forceInProcess)
+    val reduceDispatcher = pickDispatcher(toReduceLevel2, forceInProcess)
     val reducer = LocalPartitionReduceAggregateExec(qContext, reduceDispatcher, toReduceLevel2, lp.operator, lp.params)
 
     if (!qContext.plannerParams.skipAggregatePresent)
@@ -192,7 +192,7 @@ trait  PlannerHelper {
                                forceInProcess: Boolean = false): PlanResult = {
     val vectors = walkLogicalPlanTree(lp.vectors, qContext, forceInProcess)
     if (vectors.plans.length > 1) {
-      val targetActor = PlannerUtil.pickDispatcher(vectors.plans, forceInProcess)
+      val targetActor = pickDispatcher(vectors.plans, forceInProcess)
       val topPlan = LocalPartitionDistConcatExec(qContext, targetActor, vectors.plans)
       topPlan.addRangeVectorTransformer(LimitFunctionMapper(lp.limit))
       PlanResult(Seq(topPlan), vectors.needsStitch)
@@ -365,7 +365,7 @@ trait  PlannerHelper {
     val dispatcher = if (!lhs.plans.head.dispatcher.isLocalCall && !rhs.plans.head.dispatcher.isLocalCall) {
       val lhsCluster = lhs.plans.head.dispatcher.clusterName
       val rhsCluster = rhs.plans.head.dispatcher.clusterName
-      if (rhsCluster.equals(lhsCluster)) PlannerUtil.pickDispatcher(lhs.plans ++ rhs.plans, forceInProcess)
+      if (rhsCluster.equals(lhsCluster)) pickDispatcher(lhs.plans ++ rhs.plans, forceInProcess)
       else inProcessPlanDispatcher
     } else inProcessPlanDispatcher
 
@@ -392,10 +392,25 @@ trait  PlannerHelper {
     PlanResult(Seq(execPlan))
   }
 
+  /**
+   * If forceInProcess is false, picks one dispatcher randomly from child exec plans passed in as parameter.
+   * Else returns an InProcessPlanDispatcher.
+   */
+  def pickDispatcher(children: Seq[ExecPlan], forceInProcess: Boolean): PlanDispatcher = {
+    if (forceInProcess) {
+      return inProcessPlanDispatcher
+    }
+    children.find(_.dispatcher.isLocalCall).map(_.dispatcher).getOrElse {
+      val childTargets = children.map(_.dispatcher)
+      // Above list can contain duplicate dispatchers, and we don't make them distinct.
+      // Those with more shards must be weighed higher
+      val rnd = ThreadLocalRandom.current()
+      childTargets.iterator.drop(rnd.nextInt(childTargets.size)).next
+    }
+  }
 }
 
 object PlannerUtil extends StrictLogging {
-
    /**
    * Returns URL params for label values which is used to create Metadata remote exec plan
    */
@@ -408,22 +423,5 @@ object PlannerUtil extends StrictLogging {
     val filters = lp.filters.map{ f => s"""${f.column}${f.filter.operatorString}$quote${f.filter.valuesStrings.
       head}$quote"""}.mkString(",")
     Map("filter" -> filters, "labels" -> lp.labelNames.mkString(","))
-  }
-
-  /**
-   * If forceInProcess is false, picks one dispatcher randomly from child exec plans passed in as parameter.
-   * Else returns an InProcessPlanDispatcher.
-   */
-  def pickDispatcher(children: Seq[ExecPlan], forceInProcess: Boolean): PlanDispatcher = {
-    if (forceInProcess) {
-      return InProcessPlanDispatcher(EmptyQueryConfig)  // TODO(a_theimer)
-    }
-    children.find(_.dispatcher.isLocalCall).map(_.dispatcher).getOrElse {
-    val childTargets = children.map(_.dispatcher)
-    // Above list can contain duplicate dispatchers, and we don't make them distinct.
-    // Those with more shards must be weighed higher
-    val rnd = ThreadLocalRandom.current()
-    childTargets.iterator.drop(rnd.nextInt(childTargets.size)).next
-   }
   }
 }
