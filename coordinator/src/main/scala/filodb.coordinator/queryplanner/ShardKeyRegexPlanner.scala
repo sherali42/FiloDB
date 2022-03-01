@@ -74,7 +74,8 @@ class ShardKeyRegexPlanner(val dataset: Dataset,
   }
 
   def walkLogicalPlanTree(logicalPlan: LogicalPlan,
-                          qContext: QueryContext): PlanResult = {
+                          qContext: QueryContext,
+                          forceInProcess: Boolean = false): PlanResult = {
     logicalPlan match {
       case lp: ApplyMiscellaneousFunction  => materializeApplyMiscellaneousFunction(qContext, lp)
       case lp: ApplyInstantFunction        => materializeApplyInstantFunction(qContext, lp)
@@ -158,7 +159,7 @@ class ShardKeyRegexPlanner(val dataset: Dataset,
         // be InProcessPlanDispatcher and adding the current aggregate using addAggregate will use the same dispatcher
         // If the underlying plan however is not multi partition, adding the aggregator using addAggregator will
         // use the same dispatcher
-        addAggregator(aggregate, queryContext, PlanResult(Seq(childPlan)))
+        addAggregator(aggregate, queryContext, PlanResult(Seq(childPlan)), forceInProcess = false)
     } else {
       val execPlans = generateExecWithoutRegex(aggregate,
         LogicalPlan.getNonMetricShardKeyFilters(aggregate, dataset.options.nonMetricShardColumns).head, queryContext)

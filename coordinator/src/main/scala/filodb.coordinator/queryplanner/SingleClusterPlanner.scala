@@ -54,8 +54,8 @@ class SingleClusterPlanner(val dataset: Dataset,
 
   import SingleClusterPlanner._
 
-  private def dispatcherForShard(shard: Int, qContext: QueryContext): PlanDispatcher = {
-    if (qContext.plannerParams.forceInProcess) {
+  private def dispatcherForShard(shard: Int, forceInProcess: Boolean): PlanDispatcher = {
+    if (forceInProcess) {
       return InProcessPlanDispatcher(EmptyQueryConfig)
     }
     val targetActor = shardMapperFunc.coordForShard(shard)
@@ -110,10 +110,10 @@ class SingleClusterPlanner(val dataset: Dataset,
       else
         Seq(logicalPlan)
       val materialized = logicalPlans match {
-        case Seq(one) => materializeTimeSplitPlan(one, qContext)
+        case Seq(one) => materializeTimeSplitPlan(one, qContext, forceInProcess = false)
         case many =>
-          val materializedPlans = many.map(materializeTimeSplitPlan(_, qContext))
-          val targetActor = PlannerUtil.pickDispatcher(materializedPlans)
+          val materializedPlans = many.map(materializeTimeSplitPlan(_, qContext, forceInProcess = false))
+          val targetActor = PlannerUtil.pickDispatcher(materializedPlans, forceInProcess = false)
 
           // create SplitLocalPartitionDistConcatExec that will execute child execplanss sequentially and stitches
           // results back with StitchRvsMapper transformer.
@@ -127,14 +127,16 @@ class SingleClusterPlanner(val dataset: Dataset,
     }
   }
 
-  private def materializeTimeSplitPlan(logicalPlan: LogicalPlan, qContext: QueryContext): ExecPlan = {
-    val materialized = walkLogicalPlanTree(logicalPlan, qContext)
+  private def materializeTimeSplitPlan(logicalPlan: LogicalPlan,
+                                       qContext: QueryContext,
+                                       forceInProcess: Boolean): ExecPlan = {
+    val materialized = walkLogicalPlanTree(logicalPlan, qContext, forceInProcess)
     match {
       case PlanResult(Seq(justOne), stitch) =>
         if (stitch) justOne.addRangeVectorTransformer(StitchRvsMapper(rvRangeFromPlan(logicalPlan)))
         justOne
       case PlanResult(many, stitch) =>
-        val targetActor = PlannerUtil.pickDispatcher(many)
+        val targetActor = PlannerUtil.pickDispatcher(many, forceInProcess)
         many.head match {
           case _: LabelValuesExec => LabelValuesDistConcatExec(qContext, targetActor, many)
           case _: LabelNamesExec => LabelNamesDistConcatExec(qContext, targetActor, many)
@@ -272,56 +274,58 @@ class SingleClusterPlanner(val dataset: Dataset,
     */
   // scalastyle:off cyclomatic.complexity
   def walkLogicalPlanTree(logicalPlan: LogicalPlan,
-                                  qContext: QueryContext): PlanResult = {
+                          qContext: QueryContext,
+                          forceInProcess: Boolean): PlanResult = {
      logicalPlan match {
-      case lp: RawSeries                   => materializeRawSeries(qContext, lp)
-      case lp: RawChunkMeta                => materializeRawChunkMeta(qContext, lp)
-      case lp: PeriodicSeries              => materializePeriodicSeries(qContext, lp)
-      case lp: PeriodicSeriesWithWindowing => materializePeriodicSeriesWithWindowing(qContext, lp)
+      case lp: RawSeries                   => materializeRawSeries(qContext, lp, forceInProcess)
+      case lp: RawChunkMeta                => materializeRawChunkMeta(qContext, lp, forceInProcess)
+      case lp: PeriodicSeries              => materializePeriodicSeries(qContext, lp, forceInProcess)
+      case lp: PeriodicSeriesWithWindowing => materializePeriodicSeriesWithWindowing(qContext, lp, forceInProcess)
       case lp: ApplyInstantFunction        => materializeApplyInstantFunction(qContext, lp)
-      case lp: ApplyInstantFunctionRaw     => materializeApplyInstantFunctionRaw(qContext, lp)
-      case lp: Aggregate                   => materializeAggregate(qContext, lp)
-      case lp: BinaryJoin                  => materializeBinaryJoin(qContext, lp)
-      case lp: ScalarVectorBinaryOperation => materializeScalarVectorBinOp(qContext, lp)
-      case lp: LabelValues                 => materializeLabelValues(qContext, lp)
-      case lp: LabelNames                  => materializeLabelNames(qContext, lp)
-      case lp: TsCardinalities             => materializeTsCardinalities(qContext, lp)
-      case lp: SeriesKeysByFilters         => materializeSeriesKeysByFilters(qContext, lp)
-      case lp: ApplyMiscellaneousFunction  => materializeApplyMiscellaneousFunction(qContext, lp)
-      case lp: ApplySortFunction           => materializeApplySortFunction(qContext, lp)
-      case lp: ScalarVaryingDoublePlan     => materializeScalarPlan(qContext, lp)
+      case lp: ApplyInstantFunctionRaw     => materializeApplyInstantFunctionRaw(qContext, lp, forceInProcess)
+      case lp: Aggregate                   => materializeAggregate(qContext, lp, forceInProcess)
+      case lp: BinaryJoin                  => materializeBinaryJoin(qContext, lp, forceInProcess)
+      case lp: ScalarVectorBinaryOperation => materializeScalarVectorBinOp(qContext, lp, forceInProcess)
+      case lp: LabelValues                 => materializeLabelValues(qContext, lp, forceInProcess)
+      case lp: LabelNames                  => materializeLabelNames(qContext, lp, forceInProcess)
+      case lp: TsCardinalities             => materializeTsCardinalities(qContext, lp, forceInProcess)
+      case lp: SeriesKeysByFilters         => materializeSeriesKeysByFilters(qContext, lp, forceInProcess)
+      case lp: ApplyMiscellaneousFunction  => materializeApplyMiscellaneousFunction(qContext, lp, forceInProcess)
+      case lp: ApplySortFunction           => materializeApplySortFunction(qContext, lp, forceInProcess)
+      case lp: ScalarVaryingDoublePlan     => materializeScalarPlan(qContext, lp, forceInProcess)
       case lp: ScalarTimeBasedPlan         => materializeScalarTimeBased(qContext, lp)
-      case lp: VectorPlan                  => materializeVectorPlan(qContext, lp)
+      case lp: VectorPlan                  => materializeVectorPlan(qContext, lp, forceInProcess)
       case lp: ScalarFixedDoublePlan       => materializeFixedScalar(qContext, lp)
-      case lp: ApplyAbsentFunction         => materializeAbsentFunction(qContext, lp)
-      case lp: ApplyLimitFunction          => materializeLimitFunction(qContext, lp)
-      case lp: ScalarBinaryOperation       => materializeScalarBinaryOperation(qContext, lp)
-      case lp: SubqueryWithWindowing       => materializeSubqueryWithWindowing(qContext, lp)
-      case lp: TopLevelSubquery            => materializeTopLevelSubquery(qContext, lp)
-      case lp: LabelCardinality            => materializeLabelCardinality(qContext, lp)
+      case lp: ApplyAbsentFunction         => materializeAbsentFunction(qContext, lp, forceInProcess)
+      case lp: ApplyLimitFunction          => materializeLimitFunction(qContext, lp, forceInProcess)
+      case lp: ScalarBinaryOperation       => materializeScalarBinaryOperation(qContext, lp, forceInProcess)
+      case lp: SubqueryWithWindowing       => materializeSubqueryWithWindowing(qContext, lp, forceInProcess)
+      case lp: TopLevelSubquery            => materializeTopLevelSubquery(qContext, lp, forceInProcess)
+      case lp: LabelCardinality            => materializeLabelCardinality(qContext, lp, forceInProcess)
       //case _                               => throw new BadQueryException("Invalid logical plan")
     }
   }
   // scalastyle:on cyclomatic.complexity
   // scalastyle:off method.length
   override def materializeBinaryJoin(qContext: QueryContext,
-                                     lp: BinaryJoin): PlanResult = {
+                                     lp: BinaryJoin,
+                                     forceInProcess: Boolean): PlanResult = {
     // TODO(a_theimer): could probably give this section its own method and generalize
     //   to other non-leaf plans (especially since repeat tree traversals are probably
     //   no big deal w.r.t. performance).
-    // InProcessDispatcher is forced iff join only spans a single shard
-    var childrenContext = qContext
+
     // occupied with a shard's dispatcher iff the join only spans the single shard
     var singleShardDispatcherOpt: Option[PlanDispatcher] = None
+
     if (qContext.plannerParams.targetSchema.isDefined) {
       val leafPlans = findLeafLogicalPlans(lp.lhs) ++ findLeafLogicalPlans(lp.rhs)
       val filterSets = leafPlans.flatMap(getRawSeriesFilters(_)).map(renameMetricFilter(_))
-      val intervals = leafPlans.map{
+      val intervals = leafPlans.map {
         case raw: RawSeries => raw.rangeSelector.asInstanceOf[IntervalSelector]
         case _ => IntervalSelector(Long.MinValue, Long.MaxValue)
       }
       // make sure all filter sets span the target schema columns
-      val useTargetSchema = filterSets.zip(intervals).forall{ case (filters, interval) =>
+      val useTargetSchema = filterSets.zip(intervals).forall { case (filters, interval) =>
         val schemas = qContext.plannerParams.targetSchema.get.targetSchemaFunc(filters)
         useTargetSchemaForShards(filters, findTargetSchema(schemas, interval.from, interval.to))
       }
@@ -330,20 +334,19 @@ class SingleClusterPlanner(val dataset: Dataset,
         val shards = filterSets.map(
           shardsFromFilters(_, qContext, useTargetSchemaForShards = true)).flatten
         if (shards.toSet.size == 1) {
-          singleShardDispatcherOpt = Some(dispatcherForShard(shards.head, qContext))
-          childrenContext = qContext.copy(
-            plannerParams = qContext.plannerParams.copy(forceInProcess = true))
+          singleShardDispatcherOpt = Some(dispatcherForShard(shards.head, forceInProcess))
         }
       }
     }
 
-    val lhs = walkLogicalPlanTree(lp.lhs, childrenContext)
-    val stitchedLhs = if (lhs.needsStitch) Seq(StitchRvsExec(childrenContext,
-      PlannerUtil.pickDispatcher(lhs.plans), rvRangeFromPlan(lp), lhs.plans))
+    val forceChildrenInProcess = singleShardDispatcherOpt.isDefined
+    val lhs = walkLogicalPlanTree(lp.lhs, qContext, forceChildrenInProcess)
+    val stitchedLhs = if (lhs.needsStitch) Seq(StitchRvsExec(qContext,
+      PlannerUtil.pickDispatcher(lhs.plans, forceInProcess), rvRangeFromPlan(lp), lhs.plans))
     else lhs.plans
-    val rhs = walkLogicalPlanTree(lp.rhs, childrenContext)
-    val stitchedRhs = if (rhs.needsStitch) Seq(StitchRvsExec(childrenContext,
-      PlannerUtil.pickDispatcher(rhs.plans), rvRangeFromPlan(lp), rhs.plans))
+    val rhs = walkLogicalPlanTree(lp.rhs, qContext, forceChildrenInProcess)
+    val stitchedRhs = if (rhs.needsStitch) Seq(StitchRvsExec(qContext,
+      PlannerUtil.pickDispatcher(rhs.plans, forceInProcess), rvRangeFromPlan(lp), rhs.plans))
     else rhs.plans
 
     // TODO Currently we create separate exec plan node for stitching.
@@ -352,7 +355,8 @@ class SingleClusterPlanner(val dataset: Dataset,
     // In theory, more efficient to use transformer than to have separate exec plan node to avoid IO.
     // In the interest of keeping it simple, deferring decorations to the ExecPlan. Add only if needed after measuring.
 
-    val targetActor = singleShardDispatcherOpt.getOrElse(PlannerUtil.pickDispatcher(stitchedLhs ++ stitchedRhs))
+    val targetActor = singleShardDispatcherOpt.getOrElse(
+      PlannerUtil.pickDispatcher(stitchedLhs ++ stitchedRhs, forceInProcess))
     val joined = if (lp.operator.isInstanceOf[SetOperator])
       Seq(exec.SetOperatorExec(qContext, targetActor, stitchedLhs, stitchedRhs, lp.operator,
         LogicalPlanUtils.renameLabels(lp.on, dsOptions.metricColumn),
@@ -369,12 +373,13 @@ class SingleClusterPlanner(val dataset: Dataset,
   // scalastyle:on method.length
 
   private def materializePeriodicSeriesWithWindowing(qContext: QueryContext,
-                                                     lp: PeriodicSeriesWithWindowing): PlanResult = {
+                                                     lp: PeriodicSeriesWithWindowing,
+                                                     forceInProcess: Boolean): PlanResult = {
     val logicalPlanWithoutBucket = if (queryConfig.translatePromToFilodbHistogram) {
        removeBucket(Right(lp))._3.right.get
     } else lp
 
-    val series = walkLogicalPlanTree(logicalPlanWithoutBucket.series, qContext)
+    val series = walkLogicalPlanTree(logicalPlanWithoutBucket.series, qContext, forceInProcess)
     val rawSource = logicalPlanWithoutBucket.series.isRaw
 
     /* Last function is used to get the latest value in the window for absent_over_time
@@ -394,7 +399,7 @@ class SingleClusterPlanner(val dataset: Dataset,
       // Add sum to aggregate all child responses
       // If all children have NaN value, sum will yield NaN and AbsentFunctionMapper will yield 1
       val aggregatePlanResult = PlanResult(Seq(addAggregator(aggregate, qContext.copy(plannerParams =
-        qContext.plannerParams.copy(skipAggregatePresent = true)), series)))
+        qContext.plannerParams.copy(skipAggregatePresent = true)), series, forceInProcess)))
       addAbsentFunctionMapper(aggregatePlanResult, logicalPlanWithoutBucket.columnFilters,
         RangeParams(logicalPlanWithoutBucket.startMs / 1000, logicalPlanWithoutBucket.stepMs / 1000,
           logicalPlanWithoutBucket.endMs / 1000), qContext)
@@ -430,7 +435,8 @@ class SingleClusterPlanner(val dataset: Dataset,
     }
   }
   private def materializePeriodicSeries(qContext: QueryContext,
-                                        lp: PeriodicSeries): PlanResult = {
+                                        lp: PeriodicSeries,
+                                        forceInProcess: Boolean): PlanResult = {
 
    // Convert to FiloDB histogram by removing le label and bucket prefix
    // _sum and _count are removed in MultiSchemaPartitionsExec since we need to check whether there is a metric name
@@ -442,7 +448,7 @@ class SingleClusterPlanner(val dataset: Dataset,
 
     } else (None, None, lp)
 
-    val rawSeries = walkLogicalPlanTree(lpWithoutBucket.rawSeries, qContext)
+    val rawSeries = walkLogicalPlanTree(lpWithoutBucket.rawSeries, qContext, forceInProcess)
     rawSeries.plans.foreach(_.addRangeVectorTransformer(PeriodicSamplesMapper(lp.startMs, lp.stepMs, lp.endMs,
       None, None, qContext, stepMultipleNotationUsed = false, Nil, lp.offsetMs)))
 
@@ -501,7 +507,8 @@ class SingleClusterPlanner(val dataset: Dataset,
   }
 
   private def materializeRawSeries(qContext: QueryContext,
-                                   lp: RawSeries): PlanResult = {
+                                   lp: RawSeries,
+                                   forceInProcess: Boolean): PlanResult = {
     val spreadProvToUse = qContext.plannerParams.spreadOverride.getOrElse(spreadProvider)
     val offsetMillis: Long = lp.offsetMs.getOrElse(0)
     val colName = lp.columns.headOption
@@ -540,7 +547,7 @@ class SingleClusterPlanner(val dataset: Dataset,
     val useTSForQueryShards = !tsChangeExists && allTSLabelsPresent
 
     val execPlans = shardsFromFilters(renamedFilters, qContext, useTSForQueryShards).map { shard =>
-      val dispatcher = dispatcherForShard(shard, qContext)
+      val dispatcher = dispatcherForShard(shard, forceInProcess)
       MultiSchemaPartitionsExec(qContext, dispatcher, dsRef, shard, renamedFilters,
         toChunkScanMethod(rangeSelectorWithOffset), dsOptions.metricColumn, schemaOpt, colName)
     }
@@ -550,7 +557,8 @@ class SingleClusterPlanner(val dataset: Dataset,
   }
 
   private def materializeLabelValues(qContext: QueryContext,
-                                     lp: LabelValues): PlanResult = {
+                                     lp: LabelValues,
+                                     forceInProcess: Boolean): PlanResult = {
     // If the label is PromMetricLabel and is different than dataset's metric name,
     // replace it with dataset's metric name. (needed for prometheus plugins)
     val metricLabelIndex = lp.labelNames.indexOf(PromMetricLabel)
@@ -565,7 +573,7 @@ class SingleClusterPlanner(val dataset: Dataset,
       shardMapperFunc.assignedShards
     }
     val metaExec = shardsToHit.map { shard =>
-      val dispatcher = dispatcherForShard(shard, qContext)
+      val dispatcher = dispatcherForShard(shard, forceInProcess)
       exec.LabelValuesExec(qContext, dispatcher, dsRef, shard, renamedFilters, labelNames, lp.startMs, lp.endMs)
     }
     PlanResult(metaExec)
@@ -587,7 +595,8 @@ class SingleClusterPlanner(val dataset: Dataset,
   }
 
   private def materializeLabelNames(qContext: QueryContext,
-                                    lp: LabelNames): PlanResult = {
+                                    lp: LabelNames,
+                                    forceInProcess: Boolean): PlanResult = {
     val renamedFilters = renameMetricFilter(lp.filters)
     val shardsToHit = if (canGetShardsFromFilters(renamedFilters, qContext)) {
       shardsFromFilters(renamedFilters, qContext)
@@ -597,35 +606,38 @@ class SingleClusterPlanner(val dataset: Dataset,
     }
 
     val metaExec = shardsToHit.map { shard =>
-      val dispatcher = dispatcherForShard(shard, qContext)
+      val dispatcher = dispatcherForShard(shard, forceInProcess)
       exec.LabelNamesExec(qContext, dispatcher, dsRef, shard, renamedFilters, lp.startMs, lp.endMs)
     }
     PlanResult(metaExec)
   }
 
   private def materializeLabelCardinality(qContext: QueryContext,
-                                    lp: LabelCardinality): PlanResult = {
+                                          lp: LabelCardinality,
+                                          forceInProcess: Boolean): PlanResult = {
     val renamedFilters = renameMetricFilter(lp.filters)
     val shardsToHit = shardsFromFilters(renamedFilters, qContext)
 
     val metaExec = shardsToHit.map { shard =>
-      val dispatcher = dispatcherForShard(shard, qContext)
+      val dispatcher = dispatcherForShard(shard, forceInProcess)
       exec.LabelCardinalityExec(qContext, dispatcher, dsRef, shard, renamedFilters, lp.startMs, lp.endMs)
     }
     PlanResult(metaExec)
   }
 
   private def materializeTsCardinalities(qContext: QueryContext,
-                                         lp: TsCardinalities): PlanResult = {
+                                         lp: TsCardinalities,
+                                         forceInProcess: Boolean): PlanResult = {
     val metaExec = shardMapperFunc.assignedShards.map{ shard =>
-      val dispatcher = dispatcherForShard(shard, qContext)
+      val dispatcher = dispatcherForShard(shard, forceInProcess)
       exec.TsCardExec(qContext, dispatcher, dsRef, shard, lp.shardKeyPrefix, lp.numGroupByFields)
     }
     PlanResult(metaExec)
   }
 
   private def materializeSeriesKeysByFilters(qContext: QueryContext,
-                                             lp: SeriesKeysByFilters): PlanResult = {
+                                             lp: SeriesKeysByFilters,
+                                             forceInProcess: Boolean): PlanResult = {
     // NOTE: _type_ filter support currently isn't there in series keys queries
     val (renamedFilters, _) = extractSchemaFilter(renameMetricFilter(lp.filters))
 
@@ -646,7 +658,7 @@ class SingleClusterPlanner(val dataset: Dataset,
       shardMapperFunc.assignedShards
     }
     val metaExec = shardsToHit.map { shard =>
-      val dispatcher = dispatcherForShard(shard, qContext)
+      val dispatcher = dispatcherForShard(shard, forceInProcess)
       PartKeysExec(qContext, dispatcher, dsRef, shard, renamedFilters,
                    lp.fetchFirstLastSampleTimes, lp.startMs, lp.endMs)
     }
@@ -654,12 +666,13 @@ class SingleClusterPlanner(val dataset: Dataset,
   }
 
   private def materializeRawChunkMeta(qContext: QueryContext,
-                                      lp: RawChunkMeta): PlanResult = {
+                                      lp: RawChunkMeta,
+                                      forceInProcess: Boolean): PlanResult = {
     // Translate column name to ID and validate here
     val colName = if (lp.column.isEmpty) None else Some(lp.column)
     val (renamedFilters, schemaOpt) = extractSchemaFilter(renameMetricFilter(lp.filters))
     val metaExec = shardsFromFilters(renamedFilters, qContext).map { shard =>
-      val dispatcher = dispatcherForShard(shard, qContext)
+      val dispatcher = dispatcherForShard(shard, forceInProcess)
       SelectChunkInfosExec(qContext, dispatcher, dsRef, shard, renamedFilters, toChunkScanMethod(lp.rangeSelector),
         schemaOpt, colName)
     }
