@@ -14,6 +14,8 @@ object Dependencies {
   val excludeXBean = ExclusionRule(organization = "org.apache.xbean", name = "xbean-asm6-shaded")
   val excludegrpc = ExclusionRule(organization = "io.grpc")
   val excludeAkka = ExclusionRule(organization = "com.typesafe.akka")
+  val excludeAwsJavaCore = ExclusionRule(organization = "com.amazonaws", name = "aws-java-sdk-core")
+  val excludeAwsJavaS3 = ExclusionRule(organization = "com.amazonaws", name = "aws-java-sdk-s3")
 
 
   /* Versions in various modules versus one area of build */
@@ -94,6 +96,12 @@ object Dependencies {
     // other dependencies separated by commas
     "org.lz4"                %  "lz4-java"             % "1.4",
     "com.datastax.cassandra" % "cassandra-driver-core" % cassDriverVersion,
+    logbackDep % Test
+  )
+
+  lazy val objStoreDeps = commonDeps ++ Seq(
+    // other dependencies separated by commas
+    "com.apple.cie.massilia" % "aws-java-sdk-s3" % "1.6.0.17" excludeAll(excludeAwsJavaCore, excludeAwsJavaS3),
     logbackDep % Test
   )
 

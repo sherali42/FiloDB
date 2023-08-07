@@ -229,7 +229,7 @@ extends ColumnStore with CassandraChunkSource with StrictLogging {
       }
   }
 
-  private def writeIndices(ref: DatasetRef,
+  def writeIndices(ref: DatasetRef,
                            partition: Array[Byte],
                            chunkset: ChunkSet,
                            diskTimeToLiveSeconds: Int): Future[Response] = {

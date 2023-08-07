@@ -100,6 +100,16 @@ object Submodules {
       libraryDependencies ++= cassDeps
     )
 
+  lazy val objectstore = (project in file("objectstore"))
+    .dependsOn(core % "compile->compile; test->test", coordinator)
+    .dependsOn(cassandra % "compile->compile; test->test")
+    .settings(
+      commonSettings,
+      name := "filodb-objectstore",
+      baseDirectory in Test := file("."), // since we have a config using FiloDB project root as relative path
+      libraryDependencies ++= objStoreDeps
+    )
+
   lazy val cli = (project in file("cli"))
     .dependsOn(prometheus % "compile->compile; test->test")
     .dependsOn(core, coordinator % "test->test", cassandra)

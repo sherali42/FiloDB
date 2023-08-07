@@ -3,7 +3,6 @@ import sbt.Keys._
 
 publishTo := Some(Resolver.file("Unused repo", file("target/unusedrepo")))
 
-
 // Global setting across all subprojects
 ThisBuild / organization := "org.filodb"
 ThisBuild / organizationName := "FiloDB"
@@ -13,6 +12,10 @@ ThisBuild / Test / publishArtifact := false
 ThisBuild / IntegrationTest / publishArtifact := false
 ThisBuild / licenses += ("Apache-2.0", url("http://choosealicense.com/licenses/apache/"))
 ThisBuild / pomIncludeRepository := { x => false }
+ThisBuild / resolvers ++= Seq(
+  "Apple Release" at "https://artifacts.apple.com/libs-release/",
+  "Apple Snapshot" at "https://artifacts.apple.com/libs-snapshot/"
+)
 
 enablePlugins(ProtobufPlugin)
 
@@ -22,6 +25,7 @@ lazy val query = Submodules.query
 lazy val prometheus = Submodules.prometheus
 lazy val coordinator = Submodules.coordinator
 lazy val cassandra = Submodules.cassandra
+lazy val objectstore = Submodules.objectstore
 lazy val kafka = Submodules.kafka
 lazy val cli = Submodules.cli
 lazy val http = Submodules.http
@@ -32,6 +36,7 @@ lazy val sparkJobs = Submodules.sparkJobs
 lazy val jmh = Submodules.jmh
 lazy val gatling = Submodules.gatling
 lazy val grpc = Submodules.grpc
+
 
 
 
