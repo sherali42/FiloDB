@@ -102,6 +102,7 @@ object Dependencies {
   lazy val objStoreDeps = commonDeps ++ Seq(
     // other dependencies separated by commas
     "com.apple.cie.massilia" % "aws-java-sdk-s3" % "1.6.0.17" excludeAll(excludeAwsJavaCore, excludeAwsJavaS3),
+    "org.lmdbjava"           % "lmdbjava"        % "0.8.3",
     logbackDep % Test
   )
 
