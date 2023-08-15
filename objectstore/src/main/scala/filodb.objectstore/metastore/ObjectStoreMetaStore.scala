@@ -1,0 +1,67 @@
+package filodb.objectstore.metastore
+
+import scala.concurrent.{ExecutionContext, Future}
+
+import com.typesafe.config.Config
+
+import filodb.core._
+import filodb.core.store.MetaStore
+
+/**
+ * A class for Cassandra implementation of the MetaStore.
+ *
+ * @param config a Typesafe Config with hosts, port, and keyspace parameters for Cassandra connection
+ */
+class ObjectStoreMetaStore(config: Config)
+                          (implicit val ec: ExecutionContext) extends MetaStore {
+  /**
+   * Initializes the MetaStore so it is ready for further commands.
+   */
+  override def initialize(): Future[Response] = ???
+
+  /**
+   * Clears all dataset and column metadata from the MetaStore.
+   */
+  override def clearAllData(): Future[Response] = ???
+
+  /**
+   * Shuts down the MetaStore, including any threads that might be hanging around
+   */
+  override def shutdown(): Unit = ???
+
+  /**
+   * Call this method after successfully ingesting data from the given dataset
+   * up to a particular offset. This offset can be used during recovery to determine
+   * which offset to restart from.
+   *
+   * The offset stored is per-shard, per-group. A dataset is made of many shards.
+   * Group is the set of partitions within a shard.
+   *
+   * @param dataset  checkpoint will be written for this dataset
+   * @param shardNum shard identifier
+   * @param groupNum group identifier within the shard
+   * @param offset   the offset of the last record that has been successfully processed
+   * @return Success, or MetadataException, or StorageEngineException
+   */
+  override def writeCheckpoint(dataset: DatasetRef, shardNum: Int, groupNum: Int, offset: Long): Future[Response] = ???
+
+  /**
+   * Use this method during recovery to figure out the offset to re-start ingestion
+   * from. This is calculated by finding the minimum offset from all of the offsets
+   * stored for each group of the shard.
+   *
+   * @param dataset  checkpoint will be retrieved for this dataset
+   * @param shardNum shard identifier
+   * @return the earliest offset for all groups of given shard, or 0 if none exist
+   */
+  override def readEarliestCheckpoint(dataset: DatasetRef, shardNum: Int): Future[Long] = ???
+
+  /**
+   * Use this method to retrieve checkpoints for each group of the given shard
+   *
+   * @param dataset  checkpoint will be retrieved for this dataset
+   * @param shardNum shard identifier
+   * @return a map with the group identifier as key and offset as value
+   */
+  override def readCheckpoints(dataset: DatasetRef, shardNum: Int): Future[Map[Int, Long]] = ???
+}
