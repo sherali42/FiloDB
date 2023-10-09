@@ -7,6 +7,7 @@ import scala.concurrent.duration.FiniteDuration
 import kamon.Kamon
 import kamon.metric.MeasurementUnit
 import monix.reactive.Observable
+import org.apache.spark.sql.{Row, SparkSession}
 import spire.syntax.cfor._
 
 import filodb.cassandra.columnstore.CassandraColumnStore
@@ -174,6 +175,74 @@ class BatchDownsampler(settings: DownsamplerSettings,
     DownsamplerContext.dsLogger.info(
       s"Finished iterating through and downsampling batchSize=${readablePartsBatch.size} " +
       s"partitions in current executor timeTakenMs=${endedAt-startedAt} numDsChunks=$numDsChunks")
+  }
+
+  def exportDownsampledChunks(readablePartsBatch: Seq[ReadablePartition],
+                              batchDSExporter: BatchDownsampleExporter,
+                              spark: SparkSession): Iterator[Row] = {
+
+    DownsamplerContext.dsLogger.info(s"exporting downsampled data batchSize=${readablePartsBatch.size} partitions " +
+      s"rawDataset=${settings.rawDatasetName} for " +
+      s"userTimeStart=${java.time.Instant.ofEpochMilli(userTimeStart)} " +
+      s"userTimeEndExclusive=${java.time.Instant.ofEpochMilli(userTimeEndExclusive)}")
+    numBatchesStarted.increment()
+    val startedAt = System.currentTimeMillis()
+    val downsampledChunksToPersist = MMap[FiniteDuration, Iterator[ChunkSet]]()
+    settings.downsampleResolutions.foreach { res =>
+      downsampledChunksToPersist(res) = Iterator.empty
+    }
+    val pagedPartsToFree = ArrayBuffer[PagedReadablePartition]()
+    val downsampledPartsToFree = ArrayBuffer[TimeSeriesPartition]()
+    val offHeapMem = new OffHeapMemory(rawSchemas.flatMap(_.downsample),
+      kamonTags, maxMetaSize, settings.downsampleStoreConfig)
+    var numDsChunks = 0
+    val dsRecordBuilder = new RecordBuilder(MemFactory.onHeapFactory)
+    var exportRowData: Iterator[Row] = Iterator.empty
+    try {
+      numPartitionsEncountered.increment(readablePartsBatch.length)
+      readablePartsBatch.foreach { part =>
+        val rawSchemaId = RecordSchema.schemaID(part.partKeyBytes, UnsafeUtils.arayOffset)
+        val schema = schemas(rawSchemaId)
+        if (schema != Schemas.UnknownSchema) {
+          val pkPairs = schema.partKeySchema.toStringPairs(part.partKeyBytes, UnsafeUtils.arayOffset)
+          if (settings.isEligibleForDownsample(pkPairs)) {
+            try {
+              val shouldTrace = settings.shouldTrace(pkPairs)
+              downsamplePart(offHeapMem, part, pagedPartsToFree, downsampledPartsToFree,
+                downsampledChunksToPersist, dsRecordBuilder, shouldTrace)
+              numPartitionsCompleted.increment()
+            } catch {
+              case e: Exception =>
+                DownsamplerContext.dsLogger.error(s"Error occurred when downsampling partition $pkPairs", e)
+                numPartitionsFailed.increment()
+            }
+          } else {
+            DownsamplerContext.dsLogger.debug(s"Skipping blocked partition $pkPairs")
+            numPartitionsBlocked.increment()
+          }
+        } else {
+          numPartitionsSkipped.increment()
+          DownsamplerContext.dsLogger.warn(s"Skipping series with unknown schema ID $rawSchemaId")
+        }
+      }
+      val chunkSet = downsampledChunksToPersist.toMap
+      DownsamplerContext.dsLogger.info(s"before batchDownsamplerExporter.getExportRows")
+      exportRowData = batchDSExporter.getExportRows(chunkSet)
+    } catch {
+      case e: Exception =>
+        numBatchesFailed.increment()
+        DownsamplerContext.dsLogger.error(s"Error occurred when downsampling partition 228", e)
+        throw e // will be logged by spark
+    } finally {
+      downsampleBatchLatency.record(System.currentTimeMillis() - startedAt)
+      offHeapMem.free() // free offheap mem
+      downsampledPartsToFree.clear()
+    }
+    val endedAt = System.currentTimeMillis()
+    DownsamplerContext.dsLogger.info(
+      s"Finished iterating through and downsampling batchSize=${readablePartsBatch.size} " +
+        s"partitions in current executor timeTakenMs=${endedAt - startedAt} numDsChunks=$numDsChunks")
+    exportRowData
   }
 
   /**

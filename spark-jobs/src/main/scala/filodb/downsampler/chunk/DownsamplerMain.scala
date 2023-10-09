@@ -75,6 +75,9 @@ class Downsampler(settings: DownsamplerSettings) extends Serializable {
   lazy val exportLatency =
     Kamon.histogram("export-latency", MeasurementUnit.time.milliseconds).withoutTags()
 
+  lazy val exportBlobstoreLatency =
+    Kamon.histogram("export-blobstore-latency", MeasurementUnit.time.milliseconds).withoutTags()
+
   // Gotcha!! Need separate function (Cannot be within body of a class)
   // to create a closure for spark to serialize and move to executors.
   // Otherwise, config values below were not being sent over.
@@ -110,6 +113,7 @@ class Downsampler(settings: DownsamplerSettings) extends Serializable {
     val downsamplePeriodStr = java.time.Instant.ofEpochMilli(userTimeStart).toString
 
     val batchDownsampler = new BatchDownsampler(settings, userTimeStart, userTimeEndExclusive)
+    val batchDownsamplerExporter = new BatchDownsampleExporter(settings, userTimeStart, userTimeEndExclusive)
     val batchExporter = new BatchExporter(settings, userTimeStart, userTimeEndExclusive)
 
     DownsamplerContext.dsLogger.info(s"This is the Downsampling driver. Starting downsampling job " +
@@ -154,16 +158,23 @@ class Downsampler(settings: DownsamplerSettings) extends Serializable {
         }
         // Downsample the data (this step does not contribute the the RDD).
         if (settings.chunkDownsamplerIsEnabled) {
+          DownsamplerContext.dsLogger.info(s"before batchDownsampler.downsampleBatch")
           batchDownsampler.downsampleBatch(readablePartsBatch)
         }
-        // Generate the data for the RDD.
-        if (settings.exportIsEnabled) {
+        if(settings.exportBlobstoreEnabled) {
+          DownsamplerContext.dsLogger.info(s"before batchDownsampler.exportDownsampledChunks")
+          batchDownsampler.exportDownsampledChunks(readablePartsBatch,
+            batchDownsamplerExporter, spark)
+        } else if (settings.exportIsEnabled) {
           batchExporter.getExportRows(readablePartsBatch)
         } else Iterator.empty
       }
 
+    if(settings.exportBlobstoreEnabled) {
+      batchDownsamplerExporter.exportDataToObjectStore(rdd, spark, settings)
+    }
     // Export the data produced by "getExportRows" above.
-    if (settings.exportIsEnabled) {
+    else if (settings.exportIsEnabled) {
       val exportStartMs = System.currentTimeMillis()
       // NOTE: toDF(partitionCols: _*) seems buggy
       spark.createDataFrame(rdd, batchExporter.exportSchema)

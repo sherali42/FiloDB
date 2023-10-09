@@ -116,6 +116,20 @@ class DownsamplerSettings(conf: Config = ConfigFactory.empty()) extends Serializ
 
   @transient lazy val exportFormat = downsamplerConfig.getString("data-export.format")
 
+  @transient lazy val downsampleUniCatalog = downsamplerConfig.getString("blob-store.unified-catalog")
+
+  @transient lazy val downsampleUniCatalogWarehouse = downsamplerConfig.getString("blob-store.warehouse")
+
+  @transient lazy val downsampleDatabase = downsamplerConfig.getString("blob-store.database")
+
+  @transient lazy val downsampleTable = downsamplerConfig.getString("blob-store.table")
+
+  @transient lazy val exportBlobstoreBucket = downsamplerConfig.as[String]("blob-store.bucket")
+
+  @transient lazy val exportBlobstoreEnabled = downsamplerConfig.getBoolean("blob-store.export-enabled")
+
+  @transient lazy val exportBlobstoreFormat = downsamplerConfig.getString("blob-store.format")
+
   /**
    * Two conditions should satisfy for eligibility:
    * (a) If allow list is nonEmpty partKey should match a filter in the allow list.
