@@ -159,6 +159,9 @@ case class BatchDownsampleExporter(val downsamplerSettings: DownsamplerSettings,
           }
         }
         DownsamplerContext.dsLogger.info(s"exporting chunks check2")
+        if (numChunks%100 == 0) {
+          DownsamplerContext.dsLogger.info(s"timechunk:: ${timestamp.size}")
+        }
         ExportDSRowData(duration.toString, partKeyBytes, chunkset.info.id, chunkInfo,
           workspace, namespace, metric = metric, starttime = chunkset.info.startTime, endtime = chunkset.info.endTime,
           numrows = chunkset.info.numRows, schemaid = schemaId, shard = 0, date = date, day = day,
