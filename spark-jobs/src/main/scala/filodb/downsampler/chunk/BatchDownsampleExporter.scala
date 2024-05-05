@@ -262,6 +262,7 @@ case class BatchDownsampleExporter(val downsamplerSettings: DownsamplerSettings,
        | h binary,
        | tscount binary
        |)
+       | USING iceberg
        | PARTITIONED BY (workspace string ,namespace string,year long,month long,day long,hour long,metric string)
        | LOCATION '$tablePath'
        |""".stripMargin
