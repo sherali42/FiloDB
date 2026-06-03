@@ -940,14 +940,10 @@ class SingleClusterPlanner(val dataset: Dataset,
     filters.foreach { case ColumnFilter(label, filt) =>
       val isTypeFilt = label == TypeLabel
       if (isTypeFilt) filt match {
-        case Filter.Equals(schema) =>
-          val schemaName = schema.asInstanceOf[String]
-          if (schemas.schemas.contains(schemaName)) schemaOpt = Some(schemaName)
-          else throw new BadQueryException(
-            s"Invalid value '$schemaName' for _type_ filter. " +
-            s"Valid values are: ${schemas.schemas.keys.toSeq.sorted.mkString(", ")}")
+        case Filter.Equals(schema) => schemaOpt = Some(schema.asInstanceOf[String])
         case x: Any                 => throw new IllegalArgumentException(s"Illegal filter $x on _type_")
       }
+      isTypeFilt
     }
     schemaOpt
   }
