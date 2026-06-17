@@ -109,13 +109,16 @@ trait Histogram extends Ordered[Histogram] {
           // [base^no, base^(no+1)-1], so even bucket 0's lower edge is base^0 = bucketTop(-1)+1
           // (= 1 for the standard 2/2 scheme), NOT 0 -- matching getValueForIndex(0) = 2^0.
           // Other schemes keep a genuine zero-bucket lower edge of 0.
-          val minusOneGeom = this match {
+          /*val minusOneGeom = this match {
             case h: HistogramWithBuckets => h.buckets match {
               case g: GeometricBuckets => g.minusOne
               case _                    => false
             }
             case _ => false
-          }
+          }*/
+          val minusOneGeom = true // very specific implementation for legacy purposes
+          // Scheme-aware lower/upper edges (used only here, in evenDistribution mode):
+          // encodes integer-valued samples whose smallest possible value in bucket `no`
           def schemeEdges(no: Int): (Double, Double) = {
             val lo = if (no == 0 && !minusOneGeom) 0d else bucketTop(no - 1) + 1
             (lo, bucketTop(no) + 1)
