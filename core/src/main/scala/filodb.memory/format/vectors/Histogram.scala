@@ -111,6 +111,10 @@ trait Histogram extends Ordered[Histogram] {
           // Other schemes keep a genuine zero-bucket lower edge of 0.
           val firstBucket = 2.0
           val multiplier = 2.0
+          // The integer power-of-2 scheme only ever records integer-valued observations, so `max` is
+          // floored before being used as the top bucket's upper edge.  A fractional max would
+          // otherwise widen the top bucket and bias every interpolated value.
+          val maxV = Math.floor(max)
           def bucketTopGeometric(no: Int) = {
             (firstBucket * Math.pow(multiplier, no)) - 1
           }
@@ -126,9 +130,9 @@ trait Histogram extends Ordered[Histogram] {
             val prevBucketVal = if (b == 0) 0d else bucketValue(b - 1)
             val s = bucketValue(b) - prevBucketVal
             val (schemeLo, schemeHi) = schemeEdges(b)
-            // Clip the upper edge to `max`; collapses the bucket to a degenerate span when max <= lo.
+            // Clip the upper edge to `maxV`; collapses the bucket to a degenerate span when maxV <= lo.
             var lo = schemeLo
-            val hi = Math.min(schemeHi, max)
+            val hi = Math.min(schemeHi, maxV)
             if (min > lo && min <= hi) lo = min
             val width = Math.max(0d, hi - lo)
             lo + (g - prevBucketVal) * width / (s + 1)
@@ -137,14 +141,14 @@ trait Histogram extends Ordered[Histogram] {
           val k = Math.floor(rank)                             // lower neighbour ordinal
           val frac = rank - k
           // Lower neighbour (k-th sample): snaps to max only past the last observation (q == 1).
-          val xi = if (k >= n) max else reconstructInBucket(k)
+          val xi = if (k >= n) maxV else reconstructInBucket(k)
           if (frac <= 0.001) xi
           else {
-            // Upper neighbour is the (k+1)-th sample.  it snaps the LAST sample to `max` only when
-            // it shares a bucket with the lower neighbour; across a bucket boundary (pendingSample path)
-            // the last sample is reconstructed within its own bucket, NOT snapped.
+            // Upper neighbour is the (k+1)-th sample.  The LAST sample snaps to `max` only when it
+            // shares a bucket with the lower neighbour; across a bucket boundary the last sample is
+            // reconstructed within its own bucket, NOT snapped.
             val sameBucket = firstBucketGTE(k) == firstBucketGTE(k + 1)
-            val xi1 = if (k >= n || (sameBucket && k + 1 >= n)) max else reconstructInBucket(k + 1)
+            val xi1 = if (k >= n || (sameBucket && k + 1 >= n)) maxV else reconstructInBucket(k + 1)
             xi + (xi1 - xi) * frac
           }
         } else {
